@@ -3,9 +3,9 @@
    Свої файли: спершу мережа (нова версія приїжджає одразу), кеш — якщо мережі немає.
    Чужі файли (шрифти Google): спершу кеш, бо вони не змінюються. */
 
-const CACHE = "vertikal-v1";
-const CORE = ["./", "index.html", "game.js", "manifest.json",
-              "icons/icon-192.png", "icons/icon-512.png"];
+const CACHE = "vertikal-v2";
+const CORE = ["./", "index.html", "engine.js", "app.js", "manifest.json",
+              "img/home.jpg", "icons/icon-192.png", "icons/icon-512.png"];
 
 self.addEventListener("install", e => {
   e.waitUntil(
