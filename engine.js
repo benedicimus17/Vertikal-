@@ -290,11 +290,16 @@ function signingCeiling(d, stadium, commercial){
   const above = CEIL[Math.max(1,d-1)] || 99;
   return Math.min(raw, above);
 }
+/* комісія з трансферів: прогресивна 5-12 % залежно від суми угоди */
+function transferCommission(value){
+  const t = Math.max(0, Math.min(1, value / 300000));
+  return .05 + .07 * t;
+}
 
 window.VERT = {
   R, ri, rf, pick, wpick, reseed, get SEED(){return SEED},
   ATTR, ATTR_SHORT, ROLES, GK_W, ROLE_UA, ROLE_POS, SLOT_POS, SLOT_UA,
   CEIL, AGE_CAP, P, Team, SPECS, BENCHR, SLOTS,
   episode, quickMatch, makeFixtures, duel, uname, CLUBS,
-  wageOf, valueOf, divisionIncome, wageCap, buildCost, buildHours, signingCeiling,
+  wageOf, valueOf, divisionIncome, wageCap, buildCost, buildHours, signingCeiling, transferCommission,
 };

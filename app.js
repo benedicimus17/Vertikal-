@@ -66,6 +66,7 @@ const S = {
   buildings: { stadium: 3, training: 2, academy: 1, scouts: 1, medical: 1, commercial: 1 },
   queue: [],
   owned: { crests: [], kits: [] },
+  academy: { candidates: [] },   // { p: Гравець, yearsLeft: 0..2 } — за майстер-промптом сидять 2 роки
 };
 let ME = null, LEAGUE = [];
 
@@ -132,6 +133,7 @@ const NAV = [
   { id: "home",   t: "Головна",         s: "Клуб і найближчий матч",  i: '<path d="M4 11l8-6 8 6"/><path d="M6 10v10h12V10"/><path d="M10 20v-6h4v6"/>' },
   { id: "match",  t: "Матч",            s: "Зіграти тур",             i: '<circle cx="12" cy="12" r="8.5"/><path d="M12 6.5l3.2 2.3-1.2 3.8h-4L8.8 8.8 12 6.5zM12 17.5v-4.9M6.6 10.3l3.3 2.3M17.4 10.3l-3.3 2.3"/>' },
   { id: "team",   t: "Команда",         s: "Склад і тренування",      i: '<path d="M9 4h6l4 2-2 4h-2v10H9V10H7L5 6l4-2z"/>' },
+  { id: "academy", t: "Академія",       s: "Вихованці і скаути",      i: BICON.academy },
   { id: "market", t: "Ринок",           s: "Трансфери",               i: '<path d="M4 8h13l-3-3M20 16H7l3 3"/>' },
   { id: "infra",  t: "Інфраструктура",  s: "Стадіон і будівлі",       i: BICON.commercial },
   { id: "league", t: "Ліга",            s: "Таблиця і кубок",         i: '<path d="M7 4h10v5a5 5 0 01-10 0V4z"/><path d="M7 6H4v1a3 3 0 003 3M17 6h3v1a3 3 0 01-3 3M10 19h4M12 14v5"/>' },
@@ -156,21 +158,47 @@ function show(p){
   if (p === "team")   renderTeam();
   if (p === "league") renderLeague();
   if (p === "infra")  renderInfra();
+  if (p === "academy") renderAcademyPage();
+  if (p === "market") renderMarket();
   if (p === "shop")   renderShop();
   if (p === "settings") renderSettings();
-  if (p === "match" && !M.hm) openMatch();
+  if (p === "match"){ if (!M.hm) openMatch(); else ensurePitchLoop() }
 }
-/* свайпи між розділами */
-let tx = 0, ty = 0, tracking = false;
+/* свайпи між розділами.
+   Напрям жесту фіксується один раз, одразу як рух стає помітним (перші ~12 px),
+   і більше не переглядається до кінця дотику. Без цього довгий вертикальний
+   скрол списку гравців (де рука природно трохи гуляє вбік) міг у кінці
+   набрати достатньо dx, щоб хибно зчитатись як свайп і перекинути на інший
+   розділ — саме так і траплялось у складі команди. */
+let tx = 0, ty = 0, tracking = false, swipeAxis = null;
+
+/* Коли телефон заблокований у портреті, ми розвертаємо гру самі через CSS
+   (див. index.html). Але система про цей поворот не знає: координати дотику
+   приходять у СПРАВЖНІХ координатах екрана, неповернутих. Тому рух пальця,
+   який для ока горизонтальний, у цих координатах вертикальний — і навпаки.
+   Без цього перерахунку жоден горизонтальний свайп не спрацьовував би. */
+const isRotatedHack = () => matchMedia("(orientation:portrait)").matches && innerWidth <= 820;
+function toVisual(dxRaw, dyRaw){
+  return isRotatedHack() ? { dx: dyRaw, dy: -dxRaw } : { dx: dxRaw, dy: dyRaw };
+}
+
 document.addEventListener("touchstart", e => {
   if (e.touches.length !== 1) return;
-  tx = e.touches[0].clientX; ty = e.touches[0].clientY; tracking = true;
+  tx = e.touches[0].clientX; ty = e.touches[0].clientY;
+  tracking = true; swipeAxis = null;
+}, { passive: true });
+document.addEventListener("touchmove", e => {
+  if (!tracking || swipeAxis || e.touches.length !== 1) return;
+  const { dx, dy } = toVisual(e.touches[0].clientX - tx, e.touches[0].clientY - ty);
+  if (Math.abs(dx) < 12 && Math.abs(dy) < 12) return;   // ще не зрозуміло, куди веде рука
+  swipeAxis = Math.abs(dx) > Math.abs(dy) * 1.6 ? "h" : "v";
 }, { passive: true });
 document.addEventListener("touchend", e => {
   if (!tracking) return; tracking = false;
-  const dx = e.changedTouches[0].clientX - tx, dy = e.changedTouches[0].clientY - ty;
-  if (Math.abs(dx) < 70 || Math.abs(dx) < Math.abs(dy) * 1.6) return;
-  if (M.live) return;                       // під час матчу свайпи не крадуть керування
+  if (swipeAxis !== "h") return;             // жест розпізнано як скрол — свайп-навігацію не чіпаємо
+  const { dx } = toVisual(e.changedTouches[0].clientX - tx, e.changedTouches[0].clientY - ty);
+  if (Math.abs(dx) < 70) return;
+  if (M.live) return;                        // під час матчу свайпи не крадуть керування
   const i = NAV.findIndex(n => n.id === page);
   const j = dx < 0 ? Math.min(NAV.length - 1, i + 1) : Math.max(0, i - 1);
   if (i !== j) show(NAV[j].id);
@@ -240,17 +268,20 @@ function prow(p, slot, isSub){
     <div class="pv"><b>${Math.round(p.power())}</b><div class="frbar"><i style="width:${fr}%"></i></div></div></div>`;
 }
 function renderTeam(){
-  $("#teamSub").textContent = `Оцінка складу ${Math.round(ME.rate())} · хімія +${(ME.chem() * 100).toFixed(1)} % · зарплатня ${fmt(ME.wageBill())} за сезон`;
+  $("#teamSub").textContent = picked
+    ? `Оберіть, з ким поміняти місцями ${getP(picked).name}. Тап по ньому самому — скасувати.`
+    : `Оцінка складу ${Math.round(ME.rate())} · хімія +${(ME.chem() * 100).toFixed(1)} % · зарплатня ${fmt(ME.wageBill())} за сезон`;
   $("#xi").innerHTML = V.SLOTS.map(s => prow(s === "GK" ? ME.gk : ME.xi[s], s, false)).join("");
   $("#subs").innerHTML = ME.bench.map((p, i) => prow(p, "B" + i, true)).join("");
+  /* Один тап = відкрити гравця. Подвійний тап на телефоні не спрацьовував.
+     Обмін місцями вмикається кнопкою в картці: тоді наступний тап обирає, з ким. */
   $$("#xi .p,#subs .p").forEach(el => {
     el.onclick = () => {
       const s = el.dataset.slot;
-      if (picked === null) { picked = s; renderTeam(); return }
+      if (picked === null) { openPlayer(s); return }
       if (picked === s) { picked = null; renderTeam(); return }
       swap(picked, s); picked = null; renderTeam(); save();
     };
-    el.addEventListener("dblclick", () => openPlayer(el.dataset.slot));
   });
   $("#trainTabs").innerHTML = V.ATTR_SHORT.map((n, i) =>
     `<button class="${i === S.focus ? "on" : ""}" data-f="${i}">${n}</button>`).join("");
@@ -264,16 +295,69 @@ function swap(a, b){
   if ((a === "GK") !== (b === "GK") && (pa.gk || pb.gk) && !(pa.gk && pb.gk)) return;
   setP(a, pb); setP(b, pa);
 }
+/* Обличчя поки одне, намальоване для проби: воно належить нападнику (слот ST).
+   Решта гравців показують силует, щоб картка виглядала однаково в обох випадках. */
+const FACES = { ST: "img/faces/f01.jpg" };
+const SILHOUETTE = `<svg viewBox="0 0 24 24"><circle cx="12" cy="8.5" r="4.2"/>
+  <path d="M4 21c0-4.4 3.6-6.8 8-6.8s8 2.4 8 6.8"/></svg>`;
+/* Радар: вісім характеристик по колу. Саме він показує, чому той самий гравець
+   сильний у своїй ролі й слабкий у чужій — на смужках цього не видно. */
+function radarSVG(p){
+  const N = 8, R = 62, cx = 93, cy = 90;
+  const pt = (i, r) => {
+    const a = -Math.PI / 2 + i * 2 * Math.PI / N;
+    return [cx + Math.cos(a) * r, cy + Math.sin(a) * r];
+  };
+  const poly = r => Array.from({ length: N }, (_, i) => pt(i, r).map(v => v.toFixed(1)).join(",")).join(" ");
+  const web = [0.34, 0.67, 1].map(k => `<polygon class="web" points="${poly(R * k)}"/>`).join("");
+  const axes = Array.from({ length: N }, (_, i) => {
+    const [x, y] = pt(i, R);
+    return `<line class="axis" x1="${cx}" y1="${cy}" x2="${x.toFixed(1)}" y2="${y.toFixed(1)}"/>`;
+  }).join("");
+  /* Шкала радара — не 100, а стеля дивізіону вище. Інакше в Д12, де характеристики
+     близько 30, фігура перетворюється на крапку і форму гравця не видно. */
+  const scale = V.CEIL[Math.max(1, S.division - 1)] || 99;
+  const vals = Array.from({ length: N }, (_, i) =>
+    pt(i, R * Math.min(1, Math.max(0.06, p.attrs[i] / scale))).map(v => v.toFixed(1)).join(",")).join(" ");
+  const labels = V.ATTR_SHORT.map((n, i) => {
+    const [x, y] = pt(i, R + 15);
+    const anchor = x > cx + 3 ? "start" : x < cx - 3 ? "end" : "middle";
+    return `<text class="lb" x="${x.toFixed(1)}" y="${(y + 3).toFixed(1)}" text-anchor="${anchor}">${n}</text>`;
+  }).join("");
+  return `<svg class="radar" viewBox="-18 -2 222 190">${web}${axes}
+    <polygon class="val" points="${vals}"/>${labels}</svg>`;
+}
 function openPlayer(slot){
   const p = getP(slot);
-  $("#sheet").innerHTML = `<h2>${p.name}</h2>
-    <div class="s">${p.pos()} · ${p.age} років · ${V.ROLE_UA[p.role]} · ${stars(p)}</div>
+  const face = FACES[slot];
+  const capNow = Math.round(p.pot * V.AGE_CAP(p.age));
+  $("#sheet").innerHTML = `<div class="pc">
+      <div class="face">${face ? `<img src="${face}" alt="">` : SILHOUETTE}</div>
+      <div class="info">
+        <h2>${p.name}</h2>
+        <div class="s">${p.pos()} · ${p.age} років · ${V.ROLE_UA[p.role]}</div>
+        <div>${stars(p)}</div>
+        <div class="pw"><b>${Math.round(p.power())}</b><i>сила в ролі</i></div>
+      </div>
+      ${radarSVG(p)}
+    </div>
+    <div class="sec">Характеристики</div>
     <div class="attrs">${V.ATTR.map((n, i) => `<div class="at"><span>${n}</span>
       <div class="b"><i style="width:${p.attrs[i]}%"></i></div><u>${Math.round(p.attrs[i])}</u></div>`).join("")}</div>
-    <div class="note"><h3>Сила в ролі</h3><p>У ролі «${V.ROLE_UA[p.role]}» — <b style="color:var(--gold)">${Math.round(p.power())}</b>.
-      Стеля за потенціалом ${Math.round(p.pot)}, вікова межа сьогодні ${Math.round(p.pot * V.AGE_CAP(p.age))}.
+    <div class="note"><h3>${V.ROLE_UA[p.role]}</h3><p>У своїй ролі — <b style="color:var(--gold)">${Math.round(p.power())}</b>.
+      Стеля за потенціалом ${Math.round(p.pot)}, вікова межа сьогодні ${capNow}.
       Зарплата ${fmt(V.wageOf(p))} за сезон, оціночна вартість ${fmt(V.valueOf(p))}.</p></div>
-    <button class="btn ghost sm" style="margin-top:14px" onclick="closeSheet()">Закрити</button>`;
+    <div class="strip">${V.SLOTS.map(s => {
+      const q = getP(s), f = FACES[s];
+      return `<button data-s="${s}" class="${s === slot ? "on" : ""}" title="${q.name}">
+        ${f ? `<img src="${f}" alt="">` : SILHOUETTE}<u>${V.SLOT_POS[s]}</u></button>`;
+    }).join("")}</div>
+    <div style="display:flex;gap:8px;margin-top:14px">
+      <button class="btn ghost sm" id="swapBtn">Поміняти місцями</button>
+      <button class="btn ghost sm" onclick="closeSheet()">Закрити</button>
+    </div>`;
+  $$("#sheet .strip button").forEach(b => b.onclick = () => openPlayer(b.dataset.s));
+  $("#swapBtn").onclick = () => { picked = slot; closeSheet(); renderTeam() };
   $("#modal").classList.add("on");
 }
 function closeSheet(){ $("#modal").classList.remove("on") }
@@ -365,13 +449,182 @@ setInterval(() => {
     if (Date.now() >= q.endAt){
       S.buildings[q.id] = q.lvl; done = true;
       addNews("build", `${BUILDINGS.find(b => b.id === q.id).name} піднято до рівня ${q.lvl}`);
+      if (q.id === "academy") ensureAcademyStocked(false);   // новий слот — одразу видно кандидата
       return false;
     }
     return true;
   });
   if (done){ save(); renderTop(); if (page === "home") renderHome() }
   if (page === "infra"){ done ? renderInfra() : renderQueue() }
+  if (done && page === "academy") renderAcademyPage();
 }, 1000);
+
+/* =======================================================================
+   АКАДЕМІЯ
+   3-5 слотів залежно від рівня академії (майстер-промпт: 3 на старті, 5 на
+   розвинутій). Рівень академії обмежує стелю потенціалу вихованця, рівень
+   скаутського центру — наскільки сильним він приходить уже зараз.
+   Кандидати "сидять" 2 сезони; продати з академії не можна, лише
+   підписати в основну команду (коли готовий) або відрахувати достроково —
+   тоді слот звільняється одразу і чекає нового кандидата. */
+const ACAD_ROLES = Object.keys(V.ROLES);
+function academySlots(){
+  const lvl = S.buildings.academy;
+  return Math.max(3, Math.min(5, 3 + Math.floor((lvl - 1) / 5)));
+}
+function academyCeiling(){
+  return 28 + S.buildings.academy * 3.4;
+}
+function genCandidate(freshIntake){
+  const isGK = V.R() < 1 / 7;
+  const role = isGK ? "gk" : V.pick(ACAD_ROLES);
+  const baseLevel = Math.max(4, 6 + S.buildings.scouts * 0.9 + V.rf(-1.5, 1.5));   // сира сила у 16 років
+  const p = new V.P(V.uname(), role, baseLevel, isGK, 16, 0.30);
+  /* Не годиться формула P для дорослих підписань (power×1,08-1,55) — для
+     16-річного вона майже не лишає простору рости і стеля виходить
+     смішною (10-13). У скаутингу головна інтрига саме в розкиді потенціалу:
+     широкий множник, обрізаний стелею академії (майстер-промпт: рівень
+     академії обмежує стелю випускників). */
+  p.pot = Math.min(academyCeiling(), baseLevel * V.rf(2.0, 4.2));
+  /* новоприбулим у щойно збудований слот даємо розкид 0-2 роки — ніби
+     академія вже щось готувала до тебе. Поповнення після сезону завжди
+     стартує з повних 2 років (майстер-промпт: кандидати сидять 2 роки). */
+  return { p, yearsLeft: freshIntake ? 2 : V.ri(0, 2) };
+}
+function ensureAcademyStocked(freshIntake){
+  const slots = academySlots();
+  while (S.academy.candidates.length < slots) S.academy.candidates.push(genCandidate(freshIntake));
+}
+function stockAcademyAtFounding(){
+  S.academy.candidates = [];
+  const slots = academySlots();
+  for (let i = 0; i < slots; i++) S.academy.candidates.push(genCandidate(false));
+  if (slots > 0) S.academy.candidates[0].yearsLeft = 0;   // хоч один готовий одразу — є кого підписати в перший сезон
+}
+function ageAcademyOneSeason(){
+  S.academy.candidates.forEach(c => { c.yearsLeft = Math.max(0, c.yearsLeft - 1) });
+  ensureAcademyStocked(true);
+}
+function signCandidate(i){
+  const c = S.academy.candidates[i];
+  if (!c || c.yearsLeft > 0) return;
+  ME.bench.push(c.p);
+  S.academy.candidates.splice(i, 1);
+  addNews("eye", `${c.p.name} з академії підписаний в основну команду.`);
+  ensureAcademyStocked(false);
+  renderAcademyPage(); if (page === "team") renderTeam(); save();
+}
+function releaseCandidate(i){
+  const c = S.academy.candidates[i];
+  if (!c) return;
+  S.academy.candidates.splice(i, 1);
+  addNews("cap", `${c.p.name} відрахований з академії. Слот вільний.`);
+  ensureAcademyStocked(false);
+  renderAcademyPage(); save();
+}
+function renderAcademy(){
+  const box = $("#acadGrid"); if (!box) return;
+  $("#acadSub").textContent = `${S.academy.candidates.length} / ${academySlots()} слотів · рівень академії обмежує стелю ${Math.round(academyCeiling())}`;
+  if (!S.academy.candidates.length){
+    box.innerHTML = `<div class="acad-empty">Вихованців поки немає.</div>`;
+    return;
+  }
+  box.innerHTML = S.academy.candidates.map((c, i) => {
+    const ready = c.yearsLeft <= 0;
+    return `<div class="acad-card">
+      <div class="h"><div class="pos">${c.p.pos()}</div><b>${c.p.name}</b></div>
+      <p>16 років · ${V.ROLE_UA[c.p.role]} · сила ${Math.round(c.p.power())} · стеля ${Math.round(c.p.pot)} · ${stars(c.p)}</p>
+      <div class="status ${ready ? "ready" : "wait"}">${ready ? "готовий підписати" : `ще ${c.yearsLeft} ${c.yearsLeft === 1 ? "сезон" : "сезони"} в академії`}</div>
+      <div class="row">
+        <button class="btn sm ${ready ? "" : "ghost"}" data-sign="${i}" ${ready ? "" : "disabled"}>Підписати</button>
+        <button class="btn ghost sm" data-release="${i}">Відрахувати</button>
+      </div>
+    </div>`;
+  }).join("");
+  $$("#acadGrid [data-sign]").forEach(b => b.onclick = () => signCandidate(+b.dataset.sign));
+  $$("#acadGrid [data-release]").forEach(b => b.onclick = () => releaseCandidate(+b.dataset.release));
+}
+function renderAcademyPage(){
+  renderAcademy();
+  const lvl = S.buildings.scouts;
+  $("#scoutLvl").textContent = lvl;
+  $("#scoutNote").textContent = `Скаутський центр підіймає, з якою силою приходять нові вихованці — зараз стартова сила близько ${Math.round(Math.max(4, 6 + lvl * 0.9))}. Щоб підняти рівень, іди в Інфраструктуру.`;
+}
+
+/* =======================================================================
+   РИНОК
+   Відкритий: показує гравців із запасу всіх суперників дивізіону — жодних
+   намальованих чисел, ціна й зарплата рахуються тими самими формулами, що
+   й твій бюджет. Ринок поки в межах свого дивізіону: піраміда над ним ще
+   не змодельована, це чесно видно в підзаголовку. Стеля підпису — гейт:
+   занадто сильного гравця (більш ніж на 12 % вище стелі) не купиш. */
+let marketView = "buy";
+function marketCeiling(){ return V.signingCeiling(S.division, S.buildings.stadium, S.buildings.commercial) }
+function signGate(power){ return power <= marketCeiling() * 1.12 }
+function marketListings(){
+  const out = [];
+  LEAGUE.forEach(t => { if (t !== ME) t.bench.forEach(p => out.push({ club: t.name, team: t, p })) });
+  return out.sort((a, b) => V.valueOf(b.p) - V.valueOf(a.p));
+}
+function renderMarket(){
+  $("#marketSub").textContent = `Дивізіон ${S.division} · стеля підпису ${Math.round(marketCeiling())} · бюджет ${fmt(S.money)}`;
+  const box = $("#marketBody");
+  if (marketView === "buy"){
+    const rows = marketListings();
+    box.innerHTML = rows.length ? `<div class="plist">${rows.map(r => {
+      const price = Math.round(V.valueOf(r.p)), comm = Math.round(price * V.transferCommission(price)), total = price + comm;
+      const why = !signGate(r.p.power()) ? "занадто сильний для дивізіону" : S.money < total ? "бракує грошей" : null;
+      return `<div class="mrow">
+        <div class="pos">${r.p.pos()}</div>
+        <div class="pn"><b>${r.p.name}</b><i>${r.p.age} р · ${V.ROLE_UA[r.p.role]} · сила ${Math.round(r.p.power())}</i></div>
+        <div class="club">${r.club}</div>
+        ${why ? `<div class="why">${why}</div>` :
+          `<div class="price"><b>${fmt(total)}</b><i>з.п. ${fmt(V.wageOf(r.p))}/сезон</i></div>
+           <button class="btn sm" data-buy="1">Купити</button>`}
+      </div>`;
+    }).join("")}</div>` : `<div class="mempty">У суперників немає гравців у запасі.</div>`;
+    $$("#marketBody .mrow").forEach((row, i) => { const b = row.querySelector("[data-buy]"); if (b) b.onclick = () => buyPlayer(rows[i]) });
+  } else {
+    const mine = ME.bench;
+    box.innerHTML = mine.length ? `<div class="plist">${mine.map(p => {
+      const price = Math.round(V.valueOf(p)), comm = Math.round(price * V.transferCommission(price)), net = price - comm;
+      return `<div class="mrow">
+        <div class="pos">${p.pos()}</div>
+        <div class="pn"><b>${p.name}</b><i>${p.age} р · ${V.ROLE_UA[p.role]} · сила ${Math.round(p.power())}</i></div>
+        <div class="price"><b>+${fmt(net)}</b><i>комісія ${fmt(comm)}</i></div>
+        <button class="btn ghost sm" data-sell="1">Продати</button>
+      </div>`;
+    }).join("")}</div>` : `<div class="mempty">У запасі нікого немає — продавати нема кого. З основи не продати, спершу зроби заміну в «Команді».</div>`;
+    $$("#marketBody .mrow").forEach((row, i) => { const b = row.querySelector("[data-sell]"); if (b) b.onclick = () => sellPlayer(mine[i]) });
+  }
+}
+$$("#marketTabs button").forEach(b => b.onclick = () => {
+  marketView = b.dataset.v;
+  $$("#marketTabs button").forEach(x => x.classList.toggle("on", x === b));
+  renderMarket();
+});
+function buyPlayer(row){
+  if (!row) return;
+  const price = Math.round(V.valueOf(row.p)), comm = Math.round(price * V.transferCommission(price)), total = price + comm;
+  if (!signGate(row.p.power())){ toast("Гравець занадто сильний для нашого дивізіону"); return }
+  if (S.money < total){ toast("Бракує грошей"); return }
+  const idx = row.team.bench.indexOf(row.p);
+  if (idx === -1){ renderMarket(); return }   // хтось встиг забрати першим
+  row.team.bench.splice(idx, 1);
+  ME.bench.push(row.p);
+  S.money -= total;
+  addNews("cap", `Куплено ${row.p.name} у ${row.club} за ${fmt(total)}`);
+  renderMarket(); renderTop(); save();
+}
+function sellPlayer(p){
+  const bi = ME.bench.indexOf(p);
+  if (bi === -1) return;
+  const price = Math.round(V.valueOf(p)), comm = Math.round(price * V.transferCommission(price)), net = price - comm;
+  ME.bench.splice(bi, 1);
+  S.money += net;
+  addNews("cap", `Продано ${p.name} за ${fmt(net)}`);
+  renderMarket(); if (page === "team") renderTeam(); renderTop(); save();
+}
 
 /* =======================================================================
    МАГАЗИН
@@ -461,7 +714,9 @@ function openMatch(){
   $("#comm").innerHTML = "";
   $("#startBtn").textContent = "Стартовий свисток"; $("#startBtn").style.display = "";
   ME.press = 1; ME.line = 1; ME.presence = 0; ME.actions = 0;
+  initDots(); BALL.x = BALL.tx = .5; BALL.y = BALL.ty = .5;
   renderCtrl(); renderBench(); updBonus(); drawPitch(); renderSpeed();
+  ensurePitchLoop();
 }
 function renderSpeed(){
   $("#spd").innerHTML = [["×1 · 5 хв",1],["×2",2],["×4",4],["×10",10]].map(([n, v]) =>
@@ -539,11 +794,68 @@ async function keepAwake(on){
   } catch(e){ wakeFail() }
 }
 document.addEventListener("visibilitychange", () => {
-  if (document.visibilityState === "visible" && M.live && !wakeLock) keepAwake(true);
+  if (document.visibilityState !== "visible") return;
+  if (M.live && !wakeLock) keepAwake(true);
+  /* у прихованій вкладці цикл поля зупиняється (не гріємо батарею).
+     Повернулись — запускаємо знову, інакше поле лишалося б замороженим. */
+  if (page === "match") ensurePitchLoop();
 });
 
-/* ---- поле ---- */
+/* ---- поле ----
+   Гравці рухаються до цілі щокадру (requestAnimationFrame), а не стрибають
+   від події до події. Ціль формації зсувається залежно від того, хто атакує:
+   атакуюча лінія просувається вперед, оборона стягується до своїх воріт.
+   Позиції HF_BASE відповідають порядку SLOTS (перша — воротар). */
+const HF_BASE = [[.07,.5],[.20,.14],[.19,.38],[.19,.62],[.20,.86],[.31,.5],[.36,.28],[.36,.72],[.46,.12],[.47,.5],[.46,.88]];
+const AF_BASE = HF_BASE.map(([a, b]) => [1 - a, 1 - b]);
+const clamp01 = v => Math.max(.04, Math.min(.96, v));
+let homeDots = [], awayDots = [];
+function initDots(){
+  const mk = ([x, y], i) => ({ bx:x, by:y, x, y, fx:x, fy:y, tx:x, ty:y,
+                               delay: V.rf(0, .22), phase: V.rf(0, 6.28) });
+  homeDots = HF_BASE.map(mk);
+  awayDots = AF_BASE.map(mk);
+  ballFrom = { x:.5, y:.5 }; ballPath = [{ x:.5, y:.5 }];
+  moveT0 = performance.now(); moveDur = 4300;
+}
+function setFormationTargets(attacker, ballTx, ballTy){
+  const dir = attacker === M.hm ? 1 : -1;             // куди веде атака цієї команди
+  const mine   = attacker === M.hm ? homeDots : awayDots;
+  const theirs = attacker === M.hm ? awayDots : homeDots;
+  const hold = d => { d.fx = d.x; d.fy = d.y; d.delay = V.rf(0, .22) };  // звідки рушаємо цього разу
+  mine.forEach((d, i) => {
+    hold(d);
+    if (i === 0){ d.tx = d.bx; d.ty = d.by * .5 + ballTy * .5; return }  // воротар лише зміщується за м'ячем
+    const adv = .5 + i / 20;                          // передня лінія просувається сильніше за задню
+    d.tx = clamp01(d.bx + dir * .13 * adv);
+    d.ty = d.by * .72 + ballTy * .28;
+  });
+  theirs.forEach((d, i) => {
+    hold(d);
+    if (i === 0){ d.tx = d.bx; d.ty = d.by * .5 + ballTy * .5; return }
+    d.tx = clamp01(d.bx + dir * .06);                 // та сама половина поля — стягуються ближче до своїх воріт
+    d.ty = d.by * .82 + ballTy * .18;
+  });
+}
 const BALL = { x:.5, y:.5 };
+let ballFrom = { x:.5, y:.5 }, ballPath = [{ x:.5, y:.5 }];
+let moveT0 = 0, moveDur = 4300;
+
+/* М'яч не летить по прямій від події до події — між ними він робить
+   кілька передач через гравців атакуючої команди. Це та сама подія рушія,
+   просто показана як живий розіграш, а не як телепорт. */
+function buildBallPath(ev, toX, toY){
+  const atk = ev.team === M.hm ? homeDots : awayDots;
+  const hops = (ev.t === "goal" || ev.t === "shot") ? 3
+             : (ev.t === "lose" || ev.t === "block") ? 1 : 2;
+  const path = [];
+  for (let i = 1; i < hops; i++){
+    const d = atk[1 + Math.floor(V.R() * (atk.length - 1))];   // будь-хто, крім воротаря
+    path.push({ x: clamp01(d.tx + V.rf(-.03, .03)), y: clamp01(d.ty + V.rf(-.03, .03)) });
+  }
+  path.push({ x: toX, y: toY });
+  return path;
+}
 function drawPitch(){
   const c = $("#pitch"), x = c.getContext("2d"), W = c.width, H = c.height;
   x.fillStyle = "#173A27"; x.fillRect(0, 0, W, H);
@@ -554,23 +866,76 @@ function drawPitch(){
   x.beginPath(); x.arc(W / 2, H / 2, 62, 0, 7); x.stroke();
   x.strokeRect(16, H / 2 - 112, 112, 224); x.strokeRect(W - 128, H / 2 - 112, 112, 224);
   x.strokeRect(16, H / 2 - 56, 44, 112);    x.strokeRect(W - 60, H / 2 - 56, 44, 112);
-  const HF = [[.07,.5],[.20,.14],[.19,.38],[.19,.62],[.20,.86],[.31,.5],[.36,.28],[.36,.72],[.46,.12],[.47,.5],[.46,.88]];
-  const AF = HF.map(([a, b]) => [1 - a, 1 - b]);
   const dot = (px, py, fill, stroke) => { x.beginPath(); x.arc(px * W, py * H, 11, 0, 7);
     x.fillStyle = fill; x.fill(); x.lineWidth = 2; x.strokeStyle = stroke; x.stroke() };
-  const jig = () => V.rf(-.010, .010);
-  HF.forEach(([a, b]) => dot(a + jig(), b + jig(), "#D9A93C", "#7A5C16"));
-  AF.forEach(([a, b]) => dot(a + jig(), b + jig(), "#9BB4D0", "#3C5570"));
+  homeDots.forEach(d => dot(d.x, d.y, "#D9A93C", "#7A5C16"));
+  awayDots.forEach(d => dot(d.x, d.y, "#9BB4D0", "#3C5570"));
   x.beginPath(); x.arc(BALL.x * W, BALL.y * H, 7, 0, 7); x.fillStyle = "#fff"; x.fill();
   x.strokeStyle = "rgba(0,0,0,.5)"; x.lineWidth = 1.5; x.stroke();
 }
 function moveBall(ev){
   const home = ev.team === M.hm, z = ev.zone || "mid";
-  BALL.x = z === "box" ? (home ? .88 : .12) : z === "mid" ? .5 : (home ? .66 : .34);
-  BALL.y = z === "L" ? .22 : z === "R" ? .78 : V.rf(.35, .65);
-  if (ev.t === "lose") BALL.x = home ? .38 : .62;
-  drawPitch();
+  let toX = z === "box" ? (home ? .88 : .12) : z === "mid" ? .5 : (home ? .66 : .34);
+  const toY = z === "L" ? .22 : z === "R" ? .78 : V.rf(.35, .65);
+  if (ev.t === "lose") toX = home ? .38 : .62;
+  setFormationTargets(ev.team, toX, toY);
+  ballFrom = { x: BALL.x, y: BALL.y };
+  ballPath = buildBallPath(ev, toX, toY);
+  /* рух розтягуємо рівно до наступної події — тоді на полі немає мертвих пауз */
+  moveT0 = performance.now();
+  moveDur = Math.max(260, 4300 / M.speed);
 }
+/* такт без показаної події: команда просто перекочує м'яч між своїми */
+function driftBall(){
+  const atk = V.R() < M.ph ? homeDots : awayDots;
+  const a = atk[1 + Math.floor(V.R() * (atk.length - 1))];
+  const b = atk[1 + Math.floor(V.R() * (atk.length - 1))];
+  ballFrom = { x: BALL.x, y: BALL.y };
+  ballPath = [
+    { x: clamp01(a.tx + V.rf(-.03, .03)), y: clamp01(a.ty + V.rf(-.03, .03)) },
+    { x: clamp01(b.tx + V.rf(-.03, .03)), y: clamp01(b.ty + V.rf(-.03, .03)) },
+  ];
+  moveT0 = performance.now();
+  moveDur = Math.max(260, 4300 / M.speed);
+}
+/* безперервний цикл: лерпить поточні позиції до цілей і перемальовує щокадру.
+   Зупиняється, коли розділ "Матч" не на екрані, — не гріє батарею дарма. */
+let pitchRAF = null;
+const easeInOut = t => t < .5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
+const easeOut   = t => 1 - Math.pow(1 - t, 2);
+
+function pitchFrame(){
+  pitchRAF = null;
+  if (page !== "match" || document.hidden) return;
+  const now = performance.now();
+  const t = Math.min(1, (now - moveT0) / moveDur);
+
+  /* Гравці: кожен іде від своєї попередньої точки до нової рівно стільки,
+     скільки триває відрізок, з невеликою затримкою старту в кожного —
+     тоді команда пливе, а не смикається вся разом. Плюс постійне
+     мікродихання, щоб ніхто ніколи не стояв як вкопаний. */
+  const move = d => {
+    const p = easeInOut(Math.max(0, Math.min(1, (t - d.delay) / (1 - d.delay))));
+    d.x = d.fx + (d.tx - d.fx) * p + Math.sin(now / 760 + d.phase) * .0035;
+    d.y = d.fy + (d.ty - d.fy) * p + Math.cos(now / 910 + d.phase) * .0035;
+  };
+  homeDots.forEach(move); awayDots.forEach(move);
+
+  /* М'яч іде шляхом із кількох передач; кожна передача — швидкий старт,
+     м'яке прибуття, як справжній пас. */
+  const segs = ballPath.length;
+  const st = Math.min(segs - 1e-6, t * segs);
+  const i = Math.floor(st);
+  const from = i === 0 ? ballFrom : ballPath[i - 1];
+  const to = ballPath[i];
+  const e = easeOut(st - i);
+  BALL.x = from.x + (to.x - from.x) * e;
+  BALL.y = from.y + (to.y - from.y) * e;
+
+  drawPitch();
+  pitchRAF = requestAnimationFrame(pitchFrame);
+}
+function ensurePitchLoop(){ if (pitchRAF === null) pitchRAF = requestAnimationFrame(pitchFrame) }
 
 /* ---- цикл матчу ---- */
 $("#startBtn").onclick = () => {
@@ -597,14 +962,19 @@ function step(){
     return true;
   }
   if (M.ep % 6 === 0){ M.hm.tire(90 / M.N * 6); M.aw.tire(90 / M.N * 6) }
+  let shown = false;
   V.episode(M.hm, M.aw, M.ph).forEach(e => {
     const cls = e.t === "goal" ? "big" : (e.t === "yel" || e.t === "red" || e.t === "inj") ? "warn" : "";
     if (e.t === "lose" && V.R() < .55) return;
     if (e.t === "block" && V.R() < .45) return;
     say(M.min, e.txt, cls);
     if (e.t === "goal"){ $("#mgh").textContent = M.hm.goals; $("#mga").textContent = M.aw.goals }
-    moveBall(e);
+    moveBall(e); shown = true;
   });
+  /* частину епізодів ми навмисне не пишемо в стрічку, щоб не засмічувати
+     коментар. Але м'яч у такі такти раніше просто стояв — звідси й відчуття
+     "кадрів". Тепер у ці паузи йде звичайний розіграш у центрі поля. */
+  if (!shown) driftBall();
   $("#mclock").className = "clock";
   $("#mclock").innerHTML = `<span class="dot"></span>${M.min}' наживо`;
   if (M.ep >= M.N) finish();
@@ -667,6 +1037,7 @@ function nextRound(){
     S.round = 1; S.season++;
     addNews("up", `Сезон ${S.season - 1} завершено. Починається сезон ${S.season}.`);
     Object.values(S.table).forEach(v => { v.p = v.w = v.d = v.l = v.gf = v.ga = 0 });
+    ageAcademyOneSeason();
   }
   const wages = Math.round(ME.wageBill() / 30);
   S.money -= wages;
@@ -687,10 +1058,12 @@ const sp = p => ({ n:p.name, r:p.role, g:p.gk, a:p.age, at:p.attrs, po:p.pot, gl
 function serial(t){
   return { gk: sp(t.gk), xi: Object.fromEntries(Object.entries(t.xi).map(([k, p]) => [k, sp(p)])), bench: t.bench.map(sp) };
 }
+function mkPlayer(d){
+  const p = new V.P(d.n, d.r, 25, d.g, d.a); p.attrs = d.at; p.pot = d.po;
+  p.glass = d.gl; p.prof = d.pr; p.form = d.fo; p.reset(); return p;
+}
 function hydrate(o, t){
-  const mk = d => { const p = new V.P(d.n, d.r, 25, d.g, d.a); p.attrs = d.at; p.pot = d.po;
-    p.glass = d.gl; p.prof = d.pr; p.form = d.fo; p.reset(); return p };
-  t.gk = mk(o.gk); Object.entries(o.xi).forEach(([k, d]) => t.xi[k] = mk(d)); t.bench = o.bench.map(mk);
+  t.gk = mkPlayer(o.gk); Object.entries(o.xi).forEach(([k, d]) => t.xi[k] = mkPlayer(d)); t.bench = o.bench.map(mkPlayer);
 }
 function save(){
   try {
@@ -699,6 +1072,7 @@ function save(){
       money: S.money, gold: S.gold, focus: S.focus, table: S.table,
       results: S.results, feed: S.feed.slice(0, 12), buildings: S.buildings,
       queue: S.queue, owned: S.owned, squad: serial(ME),
+      academy: S.academy.candidates.map(c => ({ p: sp(c.p), yearsLeft: c.yearsLeft })),
     }));
   } catch(e){}
 }
@@ -714,6 +1088,8 @@ function load(){
     });
     buildWorld();
     if (o.squad) hydrate(o.squad, ME);
+    S.academy.candidates = (o.academy || []).map(c => ({ p: mkPlayer(c.p), yearsLeft: c.yearsLeft }));
+    ensureAcademyStocked(true);   // рівень академії міг вирости чи це старе збереження без академії
     return true;
   } catch(e){ return false }
 }
@@ -736,6 +1112,7 @@ $("#cgo").onclick = () => {
   S.club = { name, crest: newCrest, kit: newKit };
   S.owned = { crests: [newCrest], kits: [newKit] };
   buildWorld();
+  stockAcademyAtFounding();
   addNews("cap", "Президент купив клуб. Ти — новий менеджер.");
   addNews("eye", "Скаут склав список кандидатів на сезон");
   addNews("build", `Тренувальна база: рівень ${S.buildings.training}`);
