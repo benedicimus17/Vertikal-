@@ -269,7 +269,10 @@ const agePriceK= a => a<=20?1.6 : a<=23?1.35 : a<=25?1.2 : a<=28?1 : a<=31?.6 : 
 /* річна зарплата гравця */
 function wageOf(p){
   const potK = 1 + Math.max(0,(p.pot - p.power()))/140;
-  return Math.round(7.6 * Math.pow(p.power(), 2.2) * ageWageK(p.age) * potK);
+  /* wagePrem — надбавка гравцеві, який погодився піти в клуб, слабший за його рівень
+     (гібридний гейт підпису: помірний розрив — згода за більшу зарплату). */
+  const prem = p.wagePrem || 1;
+  return Math.round(7.6 * Math.pow(p.power(), 2.2) * ageWageK(p.age) * potK * prem);
 }
 /* трансферна вартість */
 function valueOf(p){ return Math.round(wageOf(p) * 4.2 * agePriceK(p.age)) }

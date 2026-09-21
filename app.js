@@ -559,31 +559,83 @@ function renderAcademyPage(){
    не змодельована, це чесно видно в підзаголовку. Стеля підпису — гейт:
    занадто сильного гравця (більш ніж на 12 % вище стелі) не купиш. */
 let marketView = "buy";
+const MF = { pos: "all", min: "", max: "", sort: "power", only: false };
 function marketCeiling(){ return V.signingCeiling(S.division, S.buildings.stadium, S.buildings.commercial) }
 function signGate(power){ return power <= marketCeiling() * 1.12 }
+/* Гібридний гейт підпису: до стелі — згода, до +12 % — згода за більшу зарплату,
+   вище — відмова. Саме це робить ланцюг «золото → будівлі → репутація → підписи». */
+function gateOf(p){
+  const c = marketCeiling(), pw = p.power();
+  if (pw <= c) return { ok: true, prem: 1, tag: "погодиться", cls: "ok" };
+  if (pw <= c * 1.12) return { ok: true, prem: 1.35, tag: "за більшу з.п.", cls: "warn" };
+  return { ok: false, prem: 1, tag: "відмовить", cls: "no" };
+}
+
+/* Ринок бачить усю піраміду, а не лише свій дивізіон. Клуби чужих дивізіонів не
+   змодельовані, тому їхні гравці генеруються під стелю свого рівня і живуть до
+   кінця сезону; свій дивізіон дає справжніх гравців із запасу суперників. */
+const OTHER_CLUBS = ["Ла Роса","Альтаміра","Ріо Секо","Монтанья","Пуерто","Камповерде",
+  "Сан-Ремо","Вальдес","Естрелья","Ель Пасо","Норте","Костаблан","Медіна","Сьєрра","Аврора"];
+let POOL = null, POOL_SEASON = -1;
+function buildPool(){
+  const out = [];
+  for (let d = Math.max(1, S.division - 3); d <= Math.min(16, S.division + 2); d++){
+    if (d === S.division) continue;
+    const ceil = V.CEIL[d] || 20, n = d < S.division ? 7 : 4;
+    for (let i = 0; i < n; i++){
+      const gk = Math.random() < .12;
+      const role = gk ? "gk" : V.SPECS[Math.floor(Math.random() * V.SPECS.length)][1];
+      const lvl = ceil * (0.78 + Math.random() * 0.24);
+      const p = new V.P(V.uname(), role, lvl, gk);
+      out.push({ club: OTHER_CLUBS[Math.floor(Math.random() * OTHER_CLUBS.length)], div: d, p });
+    }
+  }
+  return out;
+}
+function pool(){
+  if (!POOL || POOL_SEASON !== S.season){ POOL = buildPool(); POOL_SEASON = S.season }
+  return POOL;
+}
 function marketListings(){
   const out = [];
-  LEAGUE.forEach(t => { if (t !== ME) t.bench.forEach(p => out.push({ club: t.name, team: t, p })) });
-  return out.sort((a, b) => V.valueOf(b.p) - V.valueOf(a.p));
+  LEAGUE.forEach(t => { if (t !== ME) t.bench.forEach(p => out.push({ club: t.name, div: S.division, team: t, p })) });
+  pool().forEach(r => out.push(r));
+  const min = +MF.min || 0, max = +MF.max || 999;
+  const posOf = p => p.gk ? "GK" : (V.ROLE_POS[p.role] || "");
+  const group = p => p.gk ? "gk" : ["ЦЗ","КЗ"].includes(posOf(p)) ? "def"
+                : ["ОП","ЦП","АП"].includes(posOf(p)) ? "mid" : "att";
+  const rows = out.filter(r => {
+    const pw = r.p.power();
+    if (pw < min || pw > max) return false;
+    if (MF.pos !== "all" && group(r.p) !== MF.pos) return false;
+    if (MF.only && !gateOf(r.p).ok) return false;
+    return true;
+  });
+  const key = { power: r => -r.p.power(), price: r => V.valueOf(r.p), age: r => r.p.age };
+  return rows.sort((a, b) => key[MF.sort](a) - key[MF.sort](b));
 }
 function renderMarket(){
-  $("#marketSub").textContent = `Дивізіон ${S.division} · стеля підпису ${Math.round(marketCeiling())} · бюджет ${fmt(S.money)}`;
+  $("#marketSub").textContent = `Уся піраміда · стеля підпису ${Math.round(marketCeiling())} · бюджет ${fmt(S.money)}`;
+  $("#mfilters").hidden = marketView !== "buy";
   const box = $("#marketBody");
   if (marketView === "buy"){
     const rows = marketListings();
     box.innerHTML = rows.length ? `<div class="plist">${rows.map(r => {
+      const g = gateOf(r.p);
       const price = Math.round(V.valueOf(r.p)), comm = Math.round(price * V.transferCommission(price)), total = price + comm;
-      const why = !signGate(r.p.power()) ? "занадто сильний для дивізіону" : S.money < total ? "бракує грошей" : null;
+      const wage = Math.round(V.wageOf(r.p) * g.prem);
+      const poor = g.ok && S.money < total;
       return `<div class="mrow">
         <div class="pos">${r.p.pos()}</div>
         <div class="pn"><b>${r.p.name}</b><i>${r.p.age} р · ${V.ROLE_UA[r.p.role]} · сила ${Math.round(r.p.power())}</i></div>
-        <div class="club">${r.club}</div>
-        ${why ? `<div class="why">${why}</div>` :
-          `<div class="price"><b>${fmt(total)}</b><i>з.п. ${fmt(V.wageOf(r.p))}/сезон</i></div>
-           <button class="btn sm" data-buy="1">Купити</button>`}
+        <div class="club">${r.club}<u>Д${r.div}</u></div>
+        <div class="gate ${g.cls}">${g.tag}</div>
+        <div class="price"><b>${fmt(total)}</b><i>з.п. ${fmt(wage)}/сезон</i></div>
+        ${g.ok ? `<button class="btn sm" data-buy="1" ${poor ? "disabled" : ""}>${poor ? "нема грошей" : "Купити"}</button>`
+               : `<button class="btn ghost sm" disabled>—</button>`}
       </div>`;
-    }).join("")}</div>` : `<div class="mempty">У суперників немає гравців у запасі.</div>`;
-    $$("#marketBody .mrow").forEach((row, i) => { const b = row.querySelector("[data-buy]"); if (b) b.onclick = () => buyPlayer(rows[i]) });
+    }).join("")}</div>` : `<div class="mempty">За цими фільтрами нікого немає. Спробуй розширити діапазон сили.</div>`;
+    $$("#marketBody .mrow").forEach((row, i) => { const b = row.querySelector("[data-buy]:not([disabled])"); if (b) b.onclick = () => buyPlayer(rows[i]) });
   } else {
     const mine = ME.bench;
     box.innerHTML = mine.length ? `<div class="plist">${mine.map(p => {
@@ -603,17 +655,30 @@ $$("#marketTabs button").forEach(b => b.onclick = () => {
   $$("#marketTabs button").forEach(x => x.classList.toggle("on", x === b));
   renderMarket();
 });
+$("#fPos").onchange  = e => { MF.pos = e.target.value; renderMarket() };
+$("#fSort").onchange = e => { MF.sort = e.target.value; renderMarket() };
+$("#fOnly").onchange = e => { MF.only = e.target.checked; renderMarket() };
+$("#fMin").oninput   = e => { MF.min = e.target.value; renderMarket() };
+$("#fMax").oninput   = e => { MF.max = e.target.value; renderMarket() };
 function buyPlayer(row){
   if (!row) return;
+  const g = gateOf(row.p);
   const price = Math.round(V.valueOf(row.p)), comm = Math.round(price * V.transferCommission(price)), total = price + comm;
-  if (!signGate(row.p.power())){ toast("Гравець занадто сильний для нашого дивізіону"); return }
+  if (!g.ok){ toast("Гравець не піде в клуб нашого рівня"); return }
   if (S.money < total){ toast("Бракує грошей"); return }
-  const idx = row.team.bench.indexOf(row.p);
-  if (idx === -1){ renderMarket(); return }   // хтось встиг забрати першим
-  row.team.bench.splice(idx, 1);
+  if (row.team){                                  // свій дивізіон — справжній клуб
+    const idx = row.team.bench.indexOf(row.p);
+    if (idx === -1){ renderMarket(); return }      // хтось встиг забрати першим
+    row.team.bench.splice(idx, 1);
+  } else {                                        // інший дивізіон — гравець із пулу
+    const i = POOL.indexOf(row);
+    if (i === -1){ renderMarket(); return }
+    POOL.splice(i, 1);
+  }
+  if (g.prem > 1) row.p.wagePrem = g.prem;
   ME.bench.push(row.p);
   S.money -= total;
-  addNews("cap", `Куплено ${row.p.name} у ${row.club} за ${fmt(total)}`);
+  addNews("cap", `Куплено ${row.p.name} (Д${row.div}) у ${row.club} за ${fmt(total)}`);
   renderMarket(); renderTop(); save();
 }
 function sellPlayer(p){
@@ -1054,13 +1119,14 @@ function addNews(icon, text){
   S.feed.unshift({ i: icon, b: text, t: `сезон ${S.season}, тур ${S.round}`, seen: false });
   S.feed = S.feed.slice(0, 20);
 }
-const sp = p => ({ n:p.name, r:p.role, g:p.gk, a:p.age, at:p.attrs, po:p.pot, gl:p.glass, pr:p.prof, fo:p.form });
+const sp = p => ({ n:p.name, r:p.role, g:p.gk, a:p.age, at:p.attrs, po:p.pot, gl:p.glass, pr:p.prof, fo:p.form, wp:p.wagePrem });
 function serial(t){
   return { gk: sp(t.gk), xi: Object.fromEntries(Object.entries(t.xi).map(([k, p]) => [k, sp(p)])), bench: t.bench.map(sp) };
 }
 function mkPlayer(d){
   const p = new V.P(d.n, d.r, 25, d.g, d.a); p.attrs = d.at; p.pot = d.po;
-  p.glass = d.gl; p.prof = d.pr; p.form = d.fo; p.reset(); return p;
+  p.glass = d.gl; p.prof = d.pr; p.form = d.fo; if (d.wp) p.wagePrem = d.wp;
+  p.reset(); return p;
 }
 function hydrate(o, t){
   t.gk = mkPlayer(o.gk); Object.entries(o.xi).forEach(([k, d]) => t.xi[k] = mkPlayer(d)); t.bench = o.bench.map(mkPlayer);
