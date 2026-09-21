@@ -590,9 +590,18 @@ function signGate(power){ return power <= marketCeiling() * 1.12 }
    вище — відмова. Саме це робить ланцюг «золото → будівлі → репутація → підписи». */
 function gateOf(p){
   const c = marketCeiling(), pw = p.power();
-  if (pw <= c) return { ok: true, prem: 1, tag: "погодиться", cls: "ok" };
-  if (pw <= c * 1.12) return { ok: true, prem: 1.35, tag: "за більшу з.п.", cls: "warn" };
-  return { ok: false, prem: 1, tag: "відмовить", cls: "no" };
+  if (pw <= c) return { ok: true, prem: 1, bonus: 0, tag: "погодиться", cls: "ok" };
+  if (pw <= c * 1.12) return { ok: true, prem: 1.35, bonus: 0, tag: "за більшу з.п.", cls: "warn" };
+  if (pw <= c * 1.30) return { ok: true, offer: true, prem: 1.8, bonus: .30, tag: "переговори", cls: "offer" };
+  return { ok: false, prem: 1, bonus: 0, tag: "відмовить", cls: "no" };
+}
+/* Що треба, щоб гравець погодився без надбавок: найменший рівень стадіону, при якому
+   стеля підпису доросла до його сили. Так відмова вчить, що будувати. */
+function needText(p){
+  const pw = p.power();
+  for (let s = S.buildings.stadium + 1; s <= 40; s++)
+    if (V.signingCeiling(S.division, s, S.buildings.commercial) >= pw) return `стадіон ${s}`;
+  return "вищий дивізіон";
 }
 
 /* Ринок бачить усю піраміду, а не лише свій дивізіон. Клуби чужих дивізіонів не
@@ -648,18 +657,25 @@ function renderMarket(){
       const g = gateOf(r.p);
       const price = Math.round(V.valueOf(r.p)), comm = Math.round(price * V.transferCommission(price)), total = price + comm;
       const wage = Math.round(V.wageOf(r.p) * g.prem);
-      const poor = g.ok && S.money < total;
+      const due = total + Math.round(price * g.bonus);
+      const poor = g.ok && S.money < due;
+      const btn = !g.ok ? `<button class="btn ghost sm" disabled>—</button>`
+        : poor ? `<button class="btn sm" disabled>нема грошей</button>`
+        : g.offer ? `<button class="btn sm" data-offer="1">Умови</button>`
+        : `<button class="btn sm" data-buy="1">Купити</button>`;
       return `<div class="mrow">
         <div class="pos">${r.p.pos()}</div>
         <div class="pn"><b>${r.p.name}</b><i>${r.p.age} р · ${V.ROLE_UA[r.p.role]} · сила ${Math.round(r.p.power())}</i></div>
         <div class="club">${r.club}<u>Д${r.div}</u></div>
-        <div class="gate ${g.cls}">${g.tag}</div>
-        <div class="price"><b>${fmt(total)}</b><i>з.п. ${fmt(wage)}/сезон</i></div>
-        ${g.ok ? `<button class="btn sm" data-buy="1" ${poor ? "disabled" : ""}>${poor ? "нема грошей" : "Купити"}</button>`
-               : `<button class="btn ghost sm" disabled>—</button>`}
+        <div class="gate ${g.cls}">${g.tag}${g.cls === "ok" ? "" : `<u>${needText(r.p)}</u>`}</div>
+        <div class="price"><b>${fmt(due)}</b><i>з.п. ${fmt(wage)}/сезон</i></div>
+        ${btn}
       </div>`;
     }).join("")}</div>` : `<div class="mempty">За цими фільтрами нікого немає. Спробуй розширити діапазон сили.</div>`;
-    $$("#marketBody .mrow").forEach((row, i) => { const b = row.querySelector("[data-buy]:not([disabled])"); if (b) b.onclick = () => buyPlayer(rows[i]) });
+    $$("#marketBody .mrow").forEach((row, i) => {
+      const b = row.querySelector("[data-buy]"); if (b) b.onclick = () => buyPlayer(rows[i]);
+      const o = row.querySelector("[data-offer]"); if (o) o.onclick = () => openOffer(rows[i]);
+    });
   } else {
     const mine = ME.bench;
     box.innerHTML = mine.length ? `<div class="plist">${mine.map(p => {
@@ -687,7 +703,8 @@ $("#fMax").oninput   = e => { MF.max = e.target.value; renderMarket() };
 function buyPlayer(row){
   if (!row) return;
   const g = gateOf(row.p);
-  const price = Math.round(V.valueOf(row.p)), comm = Math.round(price * V.transferCommission(price)), total = price + comm;
+  const price = Math.round(V.valueOf(row.p)), comm = Math.round(price * V.transferCommission(price));
+  const total = price + comm + Math.round(price * g.bonus);   // bonus — премія за підпис на переговорах
   if (!g.ok){ toast("Гравець не піде в клуб нашого рівня"); return }
   if (S.money < total){ toast("Бракує грошей"); return }
   if (row.team){                                  // свій дивізіон — справжній клуб
@@ -704,6 +721,30 @@ function buyPlayer(row){
   S.money -= total;
   addNews("cap", `Куплено ${row.p.name} (Д${row.div}) у ${row.club} за ${fmt(total)}`);
   renderMarket(); renderTop(); save();
+}
+/* Переговори: гравець вище стелі називає свої умови, ти приймаєш або відмовляєшся. */
+function openOffer(row){
+  const g = gateOf(row.p);
+  const price = Math.round(V.valueOf(row.p)), comm = Math.round(price * V.transferCommission(price));
+  const bonus = Math.round(price * g.bonus), total = price + comm + bonus;
+  const wageNow = V.wageOf(row.p), wageAsk = Math.round(wageNow * g.prem);
+  $("#sheet").innerHTML = `<h2>Переговори: ${row.p.name}</h2>
+    <div class="s">${row.p.pos()} · ${row.p.age} років · сила ${Math.round(row.p.power())} · Д${row.div}</div>
+    <div class="note"><h3>Він сильніший, ніж дозволяє твоя стеля підпису ${Math.round(marketCeiling())}</h3>
+      <p>Піти в клуб нижчого рівня він погоджується лише на особливих умовах.</p></div>
+    <div class="attrs" style="margin-top:14px;grid-template-columns:1fr">
+      <div class="at"><span>Трансферна сума з комісією</span><u style="width:auto">${fmt(price + comm)}</u></div>
+      <div class="at"><span>Премія за підпис (30 %)</span><u style="width:auto">${fmt(bonus)}</u></div>
+      <div class="at"><span>Зарплата на сезон, а не ${fmt(wageNow)}</span><u style="width:auto">${fmt(wageAsk)}</u></div>
+      <div class="at"><span><b style="color:var(--gold-hi)">Сьогодні платиш</b></span><u style="width:auto;color:var(--gold-hi)">${fmt(total)}</u></div>
+    </div>
+    <p style="font-size:11.5px;color:var(--dim);margin:0 0 4px">Без надбавок він погодився б при стелі, яку дає ${needText(row.p)}.</p>
+    <div style="display:flex;gap:8px;margin-top:12px">
+      <button class="btn sm" id="offYes" ${S.money < total ? "disabled" : ""}>${S.money < total ? "Бракує грошей" : "Прийняти умови"}</button>
+      <button class="btn ghost sm" onclick="closeSheet()">Відмовитись</button>
+    </div>`;
+  $("#offYes").onclick = () => { closeSheet(); buyPlayer(row) };
+  $("#modal").classList.add("on");
 }
 function sellPlayer(p){
   const bi = ME.bench.indexOf(p);
