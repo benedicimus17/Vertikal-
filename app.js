@@ -267,15 +267,39 @@ function prow(p, slot, isSub){
     <div class="pn"><b>${p.name}</b><i>${p.age} р · ${V.ROLE_UA[p.role]}${off ? " · не своя позиція" : ""} · ${stars(p)}</i></div>
     <div class="pv"><b>${Math.round(p.power())}</b><div class="frbar"><i style="width:${fr}%"></i></div></div></div>`;
 }
+/* Розташування на полі: атака вправо, ворота зліва; координати в % ширини/висоти. */
+const PITCH_XY = { GK:[7,50], RB:[24,84], CB1:[22,62], CB2:[22,38], LB:[24,16],
+                   DM:[40,50], CM:[56,30], AM:[56,70], RW:[82,82], ST:[88,50], LW:[82,18] };
+const PITCH_LINES = `<svg class="ln" viewBox="0 0 105 68" preserveAspectRatio="none">
+  <rect x="1.5" y="1.5" width="102" height="65"/><line x1="52.5" y1="1.5" x2="52.5" y2="66.5"/>
+  <circle cx="52.5" cy="34" r="8"/><rect x="1.5" y="18" width="14" height="32"/>
+  <rect x="89.5" y="18" width="14" height="32"/><rect x="1.5" y="26" width="5" height="16"/>
+  <rect x="98.5" y="26" width="5" height="16"/></svg>`;
+function pitchToken(p, slot){
+  const off = slot !== "GK" && p.role !== (V.SPECS.find(s => s[0] === slot) || [])[1];
+  const sur = p.name.split(" ").slice(-1)[0];
+  const [x, y] = PITCH_XY[slot];
+  return `<button class="tk ${picked === slot ? "pick" : ""} ${off ? "off" : ""}" data-slot="${slot}"
+      style="left:${x}%;top:${y}%" title="${p.name}">
+    <span class="c">${p.face ? `<img src="${p.face}" alt="">` : V.SLOT_POS[slot]}<b>${Math.round(p.power())}</b></span>
+    <i>${sur}</i></button>`;
+}
+/* Демо-обличчя: поки воно одне, його отримує один гравець і живе з ним, а не зі слотом. */
+function ensureDemoFace(){
+  const all = [ME.gk, ...Object.values(ME.xi), ...ME.bench];
+  if (!all.some(p => p.face)) ME.xi.ST.face = "img/faces/f01.jpg";
+}
 function renderTeam(){
+  ensureDemoFace();
   $("#teamSub").textContent = picked
     ? `Оберіть, з ким поміняти місцями ${getP(picked).name}. Тап по ньому самому — скасувати.`
     : `Оцінка складу ${Math.round(ME.rate())} · хімія +${(ME.chem() * 100).toFixed(1)} % · зарплатня ${fmt(ME.wageBill())} за сезон`;
-  $("#xi").innerHTML = V.SLOTS.map(s => prow(s === "GK" ? ME.gk : ME.xi[s], s, false)).join("");
+  $("#teamPitch").innerHTML = `${PITCH_LINES}<div class="fm">4-3-3</div>` +
+    V.SLOTS.map(s => pitchToken(s === "GK" ? ME.gk : ME.xi[s], s)).join("");
   $("#subs").innerHTML = ME.bench.map((p, i) => prow(p, "B" + i, true)).join("");
-  /* Один тап = відкрити гравця. Подвійний тап на телефоні не спрацьовував.
-     Обмін місцями вмикається кнопкою в картці: тоді наступний тап обирає, з ким. */
-  $$("#xi .p,#subs .p").forEach(el => {
+  /* Один тап = відкрити гравця. Обмін вмикається кнопкою в картці, а тоді наступний
+     тап по полю чи лавці обирає, з ким поміняти. */
+  $$("#teamPitch .tk,#subs .p").forEach(el => {
     el.onclick = () => {
       const s = el.dataset.slot;
       if (picked === null) { openPlayer(s); return }
@@ -297,7 +321,7 @@ function swap(a, b){
 }
 /* Обличчя поки одне, намальоване для проби: воно належить нападнику (слот ST).
    Решта гравців показують силует, щоб картка виглядала однаково в обох випадках. */
-const FACES = { ST: "img/faces/f01.jpg" };
+const FACES = {};
 const SILHOUETTE = `<svg viewBox="0 0 24 24"><circle cx="12" cy="8.5" r="4.2"/>
   <path d="M4 21c0-4.4 3.6-6.8 8-6.8s8 2.4 8 6.8"/></svg>`;
 /* Радар: вісім характеристик по колу. Саме він показує, чому той самий гравець
@@ -329,7 +353,7 @@ function radarSVG(p){
 }
 function openPlayer(slot){
   const p = getP(slot);
-  const face = FACES[slot];
+  const face = p.face;
   const capNow = Math.round(p.pot * V.AGE_CAP(p.age));
   $("#sheet").innerHTML = `<div class="pc">
       <div class="face">${face ? `<img src="${face}" alt="">` : SILHOUETTE}</div>
@@ -348,7 +372,7 @@ function openPlayer(slot){
       Стеля за потенціалом ${Math.round(p.pot)}, вікова межа сьогодні ${capNow}.
       Зарплата ${fmt(V.wageOf(p))} за сезон, оціночна вартість ${fmt(V.valueOf(p))}.</p></div>
     <div class="strip">${V.SLOTS.map(s => {
-      const q = getP(s), f = FACES[s];
+      const q = getP(s), f = q.face;
       return `<button data-s="${s}" class="${s === slot ? "on" : ""}" title="${q.name}">
         ${f ? `<img src="${f}" alt="">` : SILHOUETTE}<u>${V.SLOT_POS[s]}</u></button>`;
     }).join("")}</div>
@@ -1119,13 +1143,13 @@ function addNews(icon, text){
   S.feed.unshift({ i: icon, b: text, t: `сезон ${S.season}, тур ${S.round}`, seen: false });
   S.feed = S.feed.slice(0, 20);
 }
-const sp = p => ({ n:p.name, r:p.role, g:p.gk, a:p.age, at:p.attrs, po:p.pot, gl:p.glass, pr:p.prof, fo:p.form, wp:p.wagePrem });
+const sp = p => ({ n:p.name, r:p.role, g:p.gk, a:p.age, at:p.attrs, po:p.pot, gl:p.glass, pr:p.prof, fo:p.form, wp:p.wagePrem, fc:p.face });
 function serial(t){
   return { gk: sp(t.gk), xi: Object.fromEntries(Object.entries(t.xi).map(([k, p]) => [k, sp(p)])), bench: t.bench.map(sp) };
 }
 function mkPlayer(d){
   const p = new V.P(d.n, d.r, 25, d.g, d.a); p.attrs = d.at; p.pot = d.po;
-  p.glass = d.gl; p.prof = d.pr; p.form = d.fo; if (d.wp) p.wagePrem = d.wp;
+  p.glass = d.gl; p.prof = d.pr; p.form = d.fo; if (d.wp) p.wagePrem = d.wp; if (d.fc) p.face = d.fc;
   p.reset(); return p;
 }
 function hydrate(o, t){
