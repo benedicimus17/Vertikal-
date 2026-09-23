@@ -3,7 +3,7 @@
    Свої файли: спершу мережа (нова версія приїжджає одразу), кеш — якщо мережі немає.
    Чужі файли (шрифти Google): спершу кеш, бо вони не змінюються. */
 
-const CACHE = "vertikal-v11";
+const CACHE = "vertikal-v12";
 const CORE = ["./", "index.html", "engine.js", "app.js", "manifest.json",
               "img/home.jpg", "img/faces/f01.jpg", "icons/icon-192.png", "icons/icon-512.png"];
 

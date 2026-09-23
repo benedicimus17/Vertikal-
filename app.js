@@ -610,6 +610,10 @@ function needText(p){
 const OTHER_CLUBS = ["Ла Роса","Альтаміра","Ріо Секо","Монтанья","Пуерто","Камповерде",
   "Сан-Ремо","Вальдес","Естрелья","Ель Пасо","Норте","Костаблан","Медіна","Сьєрра","Аврора"];
 let POOL = null, POOL_SEASON = -1;
+/* Сила слоту (primeLvl) — це якість тільки в піковому віці. Поточна сила молодого
+   гравця опускається за тією ж кривою AGE_CAP, що й тренування, а стеля (pot)
+   лишається прив'язана до primeLvl, а не до просілої поточної сили — інакше юнак
+   з високим потенціалом виглядав би безперспективним. */
 function buildPool(){
   const out = [];
   for (let d = Math.max(1, S.division - 3); d <= Math.min(16, S.division + 2); d++){
@@ -618,8 +622,11 @@ function buildPool(){
     for (let i = 0; i < n; i++){
       const gk = Math.random() < .12;
       const role = gk ? "gk" : V.SPECS[Math.floor(Math.random() * V.SPECS.length)][1];
-      const lvl = ceil * (0.78 + Math.random() * 0.24);
-      const p = new V.P(V.uname(), role, lvl, gk);
+      const age = V.ri(17, 33);
+      const primeLvl = ceil * (0.78 + Math.random() * 0.24);
+      const lvl = Math.max(4, primeLvl * V.AGE_CAP(age) * V.rf(0.92, 1.02));
+      const p = new V.P(V.uname(), role, lvl, gk, age);
+      p.pot = Math.min(99, Math.max(p.pot, primeLvl * V.rf(1.05, 1.3)));
       out.push({ club: OTHER_CLUBS[Math.floor(Math.random() * OTHER_CLUBS.length)], div: d, p });
     }
   }
