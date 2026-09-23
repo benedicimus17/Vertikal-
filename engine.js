@@ -52,8 +52,67 @@ let K=40, STEP_P=.712, CONV=.0728, FOUL_BASE=.50,
 const BIAS = -K*Math.log10(1/STEP_P-1);
 const duel=(a,b,bias=0,k=K)=>1/(1+Math.pow(10,-((a-b+bias)/k)));
 
-/* стеля рейтингу по дивізіонах: CEIL[12] = 28 */
-const CEIL=[0,99,88,78,70,62,55,49,44,39,35,31,28,25,22,20];
+/* Стеля сили по дивізіонах: рівні кроки по 5, вгорі 6–7, бо там характеристики
+   впираються в 99 і та сама різниця дає меншу перевагу. Заміряно: команда на
+   дивізіон сильніша виграє 52–61 % матчів у будь-якому місці піраміди. */
+const CEIL=[0,99,92,86,80,75,70,65,60,55,50,45,40,35,30,25,20];
+/* Стара драбина лишається тільки для грошей: зарплата й ціна рахуються так, ніби
+   сила була в старій шкалі, тому гроші кожного дивізіону не змінились. */
+const OLD_CEIL=[0,99,88,78,70,62,55,49,44,39,35,31,28,25,22,20,20];
+function legacy(x){
+  for(let d=1;d<16;d++) if(x>=CEIL[d+1]){
+    const f=(x-CEIL[d+1])/(CEIL[d]-CEIL[d+1]);
+    return OLD_CEIL[d+1]+Math.min(1,f)*(OLD_CEIL[d]-OLD_CEIL[d+1]);
+  }
+  return x*OLD_CEIL[16]/CEIL[16];
+}
+/* рівень якого дивізіону ця сила: Д12 — від 35 до 40, Д11 — від 40 до 45 … */
+function divOf(x){ for(let d=16;d>=1;d--) if(x<=CEIL[d]+1e-9) return d; return 1 }
+
+/* ---------- зірки, межа, пік ----------
+   Зірки — межа гравця: до якого рівня він може дорости за кар'єру. Кожна зірка —
+   два дивізіони: ★ Д11–12 · ★★ Д9–10 · ★★★ Д7–8 · ★★★★ Д5–6 · ★★★★★ Д3–4 · ★★★★★★ Д1–2. */
+const STAR_TOP=[45,55,65,75,86];
+const starsOfLim = lim => 1 + STAR_TOP.filter(t => lim > t + 1e-9).length;
+const LIM_BAND=[[36,45],[45,55],[55,65],[65,75],[75,86],[86,99]];
+/* Пік за позицією: нападники й вінгери раніше, захисники пізніше, воротарі найпізніше. */
+const PEAK={"НП":24.5,"ВНГ":24.5,"АП":25.5,"ЦП":25.5,"ОП":25.5,"ЦЗ":27.5,"КЗ":27.5,"ВР":29};
+/* У 16 років усі приблизно однакові (≈30), різняться межею. Слабкий талант стартує
+   ближче до своєї межі, тому й росте менше. */
+const S16=30;
+const s16Of = lim => Math.min(.7*lim, S16);
+/* Лінія віку: сильнішим за неї гравець бути не може. Від 16 років до піку вона
+   рівномірно доходить до межі — так ріст розтягується на всі роки до піку. */
+function lineAt(lim, pk, age){
+  const s=s16Of(lim), f=Math.max(0,Math.min(1,(age-16)/(pk-16)));
+  return s+(lim-s)*f;
+}
+/* зворотне: яку межу має гравець, який у цьому віці стоїть на лінії з силою y */
+function limFor(y, age, pk){
+  const f=Math.max(0,Math.min(1,(age-16)/(pk-16)));
+  if(f>=1) return y;
+  let lim = y>S16 ? S16+(y-S16)/f : 0;
+  if(lim < S16/.7) lim = y/(.7+.3*f);
+  return lim;
+}
+/* Сила тренування від рівня бази. Разом із матчами (0,25) дає частку лінії, яку
+   гравець встигає пройти: база 1 ≈ 0,6 · база 5 ≈ 0,85 · база 10 ≈ 1,15. */
+const kBase = lvl => .3 + .06*lvl;
+const MATCH_K = .25;
+/* Молодий гравець на рівні дивізіону обов'язково має високу межу — інакше він не
+   був би таким сильним у свої роки. Щоб легенди не траплялись на кожному кроці,
+   межа гравця команди звичайно не вища за стелю дивізіону на два вище (на одну
+   зірку більше, ніж природно для дивізіону); лише кожен тридцятий — «самородок»
+   з межею на шість дивізіонів вище. Якщо межа не вміщується, гравець стає старшим. */
+function limCapFor(level){
+  const d=divOf(level/.92);
+  return CEIL[Math.max(1, d-(rnd()<.03?6:2))];
+}
+function fitAge(level, role, age, cap=99){
+  const pk = PEAK[ROLE_POS[role]] ?? 25.5;
+  while(age<33 && limFor(level/.94, age, pk)>cap) age++;
+  return age;
+}
 
 /* ---------- імена ---------- */
 const F1="Дієго Пабло Хав'єр Ніко Аран Ізан Марко Ерік Начо Ману Бруно Айтор Хуліан Рубен Іван Серхіо Адам Лукас Тьяго Рафа Хорхе Альваро Гонсало Кіко Хуан Дані Мігель Артем Матео Ясін Омар Луїс Феліпе Андрій Карлос Хоакін Рікардо Педро Тоні".split(" ");
@@ -61,10 +120,12 @@ const L1="Ортега Салазар Бенітес Кабрера Ромеро
 const CLUBS=["Кантера","Атлетіко Марбелья","Реал Пенья","Ла Пальма","Естрелья","Аврора","Сітадель","Костеро","Вердемар","Санта Крус","Ібеля","Норте","Оріон","Кастельо","Понтеведра","Лагуна"];
 const uname=()=>pick(F1)+" "+pick(L1);
 
-/* ---------- гравець ---------- */
-const AGE_CAP = a=>Math.min(1,.55+.045*(a-16));
+/* ---------- гравець ----------
+   pot — межа гравця (до якої сили він може дорости за кар'єру), з неї — зірки.
+   Якщо межу не задано, її виводимо з сили й віку: гравець стоїть на своїй лінії
+   віку або трохи нижче. Тоді в усьому світі вік, сила й зірки узгоджені. */
 class P{
-  constructor(name,role,level,gk=false,age=null,spread=.22){
+  constructor(name,role,level,gk=false,age=null,spread=.22,lim=null){
     this.name=name;this.role=role;this.gk=gk;
     this.age = age ?? ri(18,31);
     const w = gk?GK_W:ROLES[role];
@@ -72,11 +133,40 @@ class P{
       level*(1+(w[i]-12.5)/12.5*spread)*rf(.93,1.07))));
     const k=level/this.power();            // сила в ролі = рівень, щоб стеля дивізіону трималась
     this.attrs=this.attrs.map(a=>Math.max(5,Math.min(99,a*k)));
-    this.pot  = Math.min(99, this.power()*rf(1.08,1.55));
+    this.pk  = PEAK[ROLE_POS[gk?"gk":role]] ?? 25.5;
+    this.pot = lim ?? Math.min(99, Math.max(this.power(), limFor(this.power()/rf(.88,1), this.age, this.pk)));
+    this.ret = 33 + ri(0,2) + (gk?2:0);    // вік завершення кар'єри; точно його не знає ніхто
     this.glass= rf(.5,2);
     this.prof = rf(.6,1.2);
     this.form = rf(.85,1.12);
     this.reset();
+  }
+  stars(){return starsOfLim(this.pot)}
+  line(ageF){return lineAt(this.pot,this.pk,ageF)}
+  /* скільки сили за день дає лінія: межа мінус старт, поділені на роки до піку.
+     Після піку гравець більше не росте. */
+  slopeDay(ageF){
+    if(ageF>=this.pk+1) return 0;
+    return (this.pot-s16Of(this.pot))/(this.pk-16)/30;
+  }
+  /* Піднімає силу в ролі на dP, але не вище лінії віку. Фокус тренування тягне
+     свою характеристику сильніше; сила в ролі від цього росте так само. */
+  grow(dP, ageF, focus=-1){
+    const cur=this.power(), d=Math.min(dP, this.line(ageF)-cur);
+    if(d<=0) return 0;
+    const w=this.gk?GK_W:ROLES[this.role];
+    const v=w.map((wi,i)=>wi+(i===focus?25:0));
+    const k=d*100/v.reduce((s,vi,i)=>s+vi*w[i],0);
+    this.attrs=this.attrs.map((a,i)=>Math.min(99,a+k*v[i]));
+    return this.power()-cur;
+  }
+  /* Після піку (+4 роки) повільно слабшають швидкість, сила й витривалість
+     (у воротаря — реакція, стрибок, сила). Техніка, пас, удар не падають. */
+  decline(ageF){
+    const start=this.pk+4; if(ageF<start) return 0;
+    const cur=this.power(), d=.10+.03*(ageF-start);
+    (this.gk?[0,4,6]:[0,1,2]).forEach(i=>{this.attrs[i]=Math.max(5,this.attrs[i]-d)});
+    return this.power()-cur;
   }
   reset(){this.fresh=1;this.rating=6;this.goals=0;this.assists=0;
           this.yellow=0;this.red=false;this.injured=false;this.touches=0}
@@ -87,21 +177,7 @@ class P{
     if(!w) return this.power();
     return this.attrs.reduce((s,a,i)=>s+a*w[i],0)/100}
   eff(m){return this.power()*(.7+.3*this.fresh)*m*this.form}
-  starPct(){return Math.max(4,Math.min(100,this.pot/99*100))}   // зірки абсолютні: шкала світу, не дивізіону
   pos(){return ROLE_POS[this.role]||"—"}
-  train(focus){
-    const cur=this.power();
-    const kAge = this.age<=20?1.35 : this.age<=23?1.15 : this.age<=26?1 : this.age<=29?.7 : .4;
-    const kCeil= Math.max(0,(this.pot-cur)/this.pot);
-    const cap  = this.pot*AGE_CAP(this.age);
-    const w=this.gk?GK_W:ROLES[this.role];
-    for(let i=0;i<8;i++){
-      if(this.attrs[i]>=cap) continue;
-      const kF = (focus===i)?1.6:.55;
-      const kB = .6+ (w[i]/100)*2.2;
-      this.attrs[i]=Math.min(cap, this.attrs[i] + .45*kAge*kB*kF*this.prof*kCeil*this.form*.25);
-    }
-  }
 }
 
 /* ---------- команда ---------- */
@@ -111,15 +187,20 @@ const SPECS=[["RB","fb_def"],["CB1","cb_destroyer"],["CB2","cb_builder"],["LB","
 const BENCHR=["cb_builder","fb_wing","dm_deep","am_ten","w_cross","st_target","st_false9"];
 const SLOTS=["GK","RB","CB1","CB2","LB","DM","CM","AM","RW","ST","LW"];
 
+/* Вік гравця основи: здебільшого 23–29, молодь в основі рідко. Стартовий склад
+   твого клубу — 22–29 років (середній ≈ 24–25). */
+const AGE_XI=[19,20,21,22,23,24,25,26,27,28,29,30,31,32], AGE_XI_W=[1,2,3,5,7,8,9,9,8,7,6,4,3,2];
+function mkAt(role,level,gk,age){ return new P(uname(),role,level,gk,fitAge(level,gk?"gk":role,age,limCapFor(level))) }
 class Team{
   constructor(name,level,human=false){
     this.name=name;this.level=level;this.human=human;
     this.press=1;this.line=1;this.tacBonus=0;this.presence=0;this.actions=0;
-    this.gk=new P(uname(),"gk",level,true);
+    const ageXI = () => human ? ri(22,29) : wpick(AGE_XI,AGE_XI_W);
+    this.gk=mkAt("gk",level,true,ri(22,32));
     this.xi={};
-    SPECS.forEach(([slot,role])=>{this.xi[slot]=new P(uname(),role,level*rf(.92,1.08))});
-    this.bench=[new P(uname(),"gk",level*.92,true),
-      ...BENCHR.map(r=>new P(uname(),r,level*rf(.82,1.0)))];
+    SPECS.forEach(([slot,role])=>{this.xi[slot]=mkAt(role,level*rf(.92,1.08),false,ageXI())});
+    this.bench=[mkAt("gk",level*.92,true,ri(19,33)),
+      ...BENCHR.map(r=>mkAt(r,level*rf(.82,1.0),false,ri(18,33)))];
     this.subsMade=0;
     this.reset();
   }
@@ -268,11 +349,13 @@ const agePriceK= a => a<=20?1.6 : a<=23?1.35 : a<=25?1.2 : a<=28?1 : a<=31?.6 : 
 
 /* річна зарплата гравця */
 function wageOf(p){
-  const potK = 1 + Math.max(0,(p.pot - p.power()))/140;
+  /* сила й межа переводяться в стару шкалу — гроші дивізіонів лишились ті самі */
+  const pw = legacy(p.power()), lim = legacy(p.pot);
+  const potK = 1 + Math.max(0,(lim - pw))/140;
   /* wagePrem — надбавка гравцеві, який погодився піти в клуб, слабший за його рівень
      (гібридний гейт підпису: помірний розрив — згода за більшу зарплату). */
   const prem = p.wagePrem || 1;
-  return Math.round(7.6 * Math.pow(p.power(), 2.2) * ageWageK(p.age) * potK * prem);
+  return Math.round(7.6 * Math.pow(pw, 2.2) * ageWageK(p.age) * potK * prem);
 }
 /* трансферна вартість */
 function valueOf(p){ return Math.round(wageOf(p) * 4.2 * agePriceK(p.age)) }
@@ -286,13 +369,25 @@ function wageCap(d, ownIncome){ return Math.round(.6 * (divisionIncome(d)/2 + ow
 function buildCost(level){ return Math.round(135000 * Math.pow(1.27, level-1)) }
 function buildHours(level){ return +(4 * Math.pow(1.25, level-1)).toFixed(1) }
 
-/* стеля підпису: стеля дивізіону × (0,86 + 0,016×стадіон + 0,008×комерційний) */
-function signingCeiling(d, stadium, commercial){
-  const base = CEIL[d] || 20;
-  const raw  = base * (.86 + .016*stadium + .008*commercial);
-  const above = CEIL[Math.max(1,d-1)] || 99;
-  return Math.min(raw, above);
+/* сила зі старої шкали — у нову (зворотне до legacy) */
+function fromLegacy(o){
+  if(o>=99) return 99+(o-99)*(CEIL[1]-CEIL[2])/(OLD_CEIL[1]-OLD_CEIL[2]);
+  for(let d=1;d<16;d++) if(o>=OLD_CEIL[d+1] && OLD_CEIL[d]>OLD_CEIL[d+1]){
+    const f=(o-OLD_CEIL[d+1])/(OLD_CEIL[d]-OLD_CEIL[d+1]);
+    return CEIL[d+1]+f*(CEIL[d]-CEIL[d+1]);
+  }
+  return o*CEIL[15]/OLD_CEIL[15];
 }
+/* Стеля підпису рахується в старій шкалі, як і було задумано: стеля дивізіону ×
+   (0,86 + 0,016×стадіон + 0,008×комерційний), не вище за дивізіон вище. У новій
+   шкалі множення на відсотки вгорі розтягнулось би на кілька дивізіонів, тому
+   спершу рахуємо по-старому, а потім переводимо в нову шкалу. */
+function signingTiers(d, stadium, commercial){
+  const base = OLD_CEIL[d] || 20;
+  const old  = Math.min(base * (.86 + .016*stadium + .008*commercial), OLD_CEIL[Math.max(1,d-1)] || 99);
+  return { c: fromLegacy(old), t1: fromLegacy(old*1.12), t2: fromLegacy(old*1.30) };
+}
+function signingCeiling(d, stadium, commercial){ return signingTiers(d, stadium, commercial).c }
 /* комісія з трансферів: прогресивна 5-12 % залежно від суми угоди */
 function transferCommission(value){
   const t = Math.max(0, Math.min(1, value / 300000));
@@ -302,7 +397,8 @@ function transferCommission(value){
 window.VERT = {
   R, ri, rf, pick, wpick, reseed, get SEED(){return SEED},
   ATTR, ATTR_SHORT, ROLES, GK_W, ROLE_UA, ROLE_POS, SLOT_POS, SLOT_UA,
-  CEIL, AGE_CAP, P, Team, SPECS, BENCHR, SLOTS,
+  CEIL, OLD_CEIL, legacy, divOf, STAR_TOP, LIM_BAND, starsOfLim, PEAK, S16, s16Of, lineAt, limFor,
+  kBase, MATCH_K, fitAge, limCapFor, P, Team, SPECS, BENCHR, SLOTS,
   episode, quickMatch, makeFixtures, duel, uname, CLUBS,
-  wageOf, valueOf, divisionIncome, wageCap, buildCost, buildHours, signingCeiling, transferCommission,
+  wageOf, valueOf, divisionIncome, wageCap, buildCost, buildHours, signingCeiling, signingTiers, fromLegacy, transferCommission,
 };

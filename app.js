@@ -6,7 +6,9 @@ const V = window.VERT;
 const $  = s => document.querySelector(s);
 const $$ = s => [...document.querySelectorAll(s)];
 const fmt = n => Math.round(n).toLocaleString("uk-UA").replace(/,/g, " ");
-const SAVE_KEY = "vert2";
+/* vert3: нова шкала сили, зірки й ріст. Старе збереження vert2 лишається в пам'яті
+   телефону, але новій версії не підходить — клуб створюється заново. */
+const SAVE_KEY = "vert3";
 
 /* =======================================================================
    ЕМБЛЕМИ І ФОРМИ (малюються кодом, у кожного клуба свої)
@@ -67,6 +69,7 @@ const S = {
   queue: [],
   owned: { crests: [], kits: [] },
   academy: { candidates: [] },   // { p: Гравець, yearsLeft: 0..2 } — за майстер-промптом сидять 2 роки
+  trained: "",                   // "сезон-тур", коли востаннє проведено тренування
 };
 let ME = null, LEAGUE = [];
 
@@ -91,16 +94,21 @@ const BICON = {
    СВІТ
    ======================================================================= */
 function levelFor(d){ return (V.CEIL[d] || 20) * 0.92 }
-function buildWorld(){
-  V.reseed(20260911 + S.club.crest * 7 + S.club.name.length);
+/* Суперники щосезону оновлюються під рівень свого дивізіону (старі йдуть, приходять
+   нові), тому зерно залежить від сезону. Твоя команда при цьому не чіпається. */
+function buildWorld(keepMe){
+  V.reseed(20260911 + S.club.crest * 7 + S.club.name.length + S.season * 1009);
   const base = levelFor(S.division);
   const mine = (S.club.name || "Вертикаль").trim();
   /* суперник із таким самим іменем зіпсував би таблицю: вона ведеться за назвами,
      два однойменні клуби злилися б в один рядок, а календар вказував би не на ту команду */
   const rivals = V.CLUBS.filter(n => n.toLowerCase() !== mine.toLowerCase()).slice(0, 15);
   while (rivals.length < 15) rivals.push("Клуб " + (rivals.length + 1));
-  ME = new V.Team(mine, base * 0.95, true);
-  LEAGUE = [ME, ...rivals.map(n => new V.Team(n, base * V.rf(0.82, 1.1)))];
+  /* спершу суперники, потім твоя команда: тоді суперники однакові і посеред гри,
+     і після перезапуску (твій склад при завантаженні все одно береться зі збереження) */
+  const rivalTeams = rivals.map(n => new V.Team(n, base * V.rf(0.82, 1.1)));
+  if (!keepMe) ME = new V.Team(mine, base * 0.95, true);
+  LEAGUE = [ME, ...rivalTeams];
   LEAGUE.forEach((t, i) => { t.crest = i === 0 ? S.club.crest : (i * 5 + 3) % CREST_COUNT });
   LEAGUE.forEach(t => { if (!S.table[t.name]) S.table[t.name] = { p:0, w:0, d:0, l:0, gf:0, ga:0 } });
   Object.keys(S.table).forEach(n => { if (!LEAGUE.some(t => t.name === n)) delete S.table[n] });
@@ -232,7 +240,7 @@ function renderHome(){
   const f = myFixture(), opp = f.isHome ? f.away : f.home;
   $("#homeTag").textContent = `Дивізіон ${S.division} · Сезон ${S.season} · Тур ${S.round}`;
   $("#homeTitle").textContent = S.club.name;
-  $("#homeLine").textContent = `${ord(tablePos(ME.name))} у таблиці. Наступний суперник — ${opp.name}, ${f.isHome ? "удома" : "у гостях"}. Склад оцінюється в ${Math.round(ME.rate())} за силою в ролі.`;
+  $("#homeLine").textContent = `${ord(tablePos(ME.name))} у таблиці. Наступний суперник — ${opp.name}, ${f.isHome ? "удома" : "у гостях"}. Склад оцінюється в ${f1(ME.rate())} за силою в ролі. ${trainedToday() ? "Сьогодні вже тренувались." : "Сьогодні ще не тренувались — тренування в розділі «Команда»."}`;
   $("#nmRound").textContent = `Тур ${S.round}`;
   $("#nmCrestH").innerHTML = crestSVG(f.home.crest ?? 0);
   $("#nmCrestA").innerHTML = crestSVG(f.away.crest ?? 0);
@@ -257,7 +265,16 @@ $("#btnProfile").onclick = () => show("settings");
    КОМАНДА
    ======================================================================= */
 let picked = null;
-function stars(p){ return `<span class="st"><span class="on" style="width:${p.starPct()}%">★★★★★</span>★★★★★</span>` }
+/* Шість зірок, кожна — два дивізіони: зірки показують межу, до якої гравець доросте. */
+function stars(p){ return `<span class="st"><span class="on">${"★".repeat(p.stars())}</span>★★★★★★</span>` }
+const f1 = x => x.toFixed(1).replace(".", ",");
+const sgn = x => (x >= 0 ? "+" : "−") + f1(Math.abs(x));
+/* денний приріст малий (сотні частки), тому показуємо два знаки */
+const sgn2 = x => (x >= 0 ? "+" : "−") + Math.abs(x).toFixed(2).replace(".", ",");
+const yrs = n => { const a = n % 10, b = n % 100;
+  return a === 1 && b !== 11 ? "рік" : a >= 2 && a <= 4 && (b < 12 || b > 14) ? "роки" : "років" };
+/* вік усередині сезону: з кожним туром гравець трохи старший — лінія росту рухається плавно */
+const ageF = p => p.age + (S.round - 1) / 30;
 function prow(p, slot, isSub){
   const fr = Math.round(p.fresh * 100);
   const label = isSub ? p.pos() : V.SLOT_POS[slot];
@@ -310,7 +327,48 @@ function renderTeam(){
   $("#trainTabs").innerHTML = V.ATTR_SHORT.map((n, i) =>
     `<button class="${i === S.focus ? "on" : ""}" data-f="${i}">${n}</button>`).join("");
   $$("#trainTabs button").forEach(b => b.onclick = () => { S.focus = +b.dataset.f; renderTeam(); save() });
-  $("#trainNote").textContent = `Фокус на «${V.ATTR[S.focus]}» піднімає цю характеристику швидше, решта ростуть повільніше. Молодь росте в рази швидше за ветеранів, а біля стелі потенціалу ріст майже зупиняється.`;
+  const done = trainedToday();
+  $("#trainBtn").disabled = done;
+  $("#trainBtn").textContent = done ? "Тренування проведено" : "Провести тренування";
+  $("#trainBtn").onclick = trainToday;
+  $("#trainStat").className = done ? "done" : "";
+  $("#trainStat").textContent = done ? "сьогодні вже тренувались, завтра — знову" : "сьогодні тренування ще не було";
+  $("#trainNote").textContent = `Головне в рості — щоденне тренування, а тренувальна база (зараз рівень ${S.buildings.training}) визначає, наскільки воно сильне. Без тренувань гравці ростуть мало, тільки від матчів. Кожен росте рівномірно до своєї межі (її показують зірки) якраз до свого піку: нападники — до 24–25 років, півзахисники — до 25–26, захисники — до 27–28, воротарі — пізніше. Фокус на «${V.ATTR[S.focus]}» тягне цю характеристику швидше за інші.`;
+}
+/* =======================================================================
+   РІСТ
+   Щоденне тренування — головне джерело росту, база визначає його силу.
+   Матч додає трохи тим, хто грав. Ніхто не росте вище своєї лінії віку.
+   ======================================================================= */
+const trainedToday = () => S.trained === `${S.season}-${S.round}`;
+function squadAll(){ return [ME.gk, ...Object.values(ME.xi), ...ME.bench] }
+function trainToday(){
+  if (trainedToday()) return;
+  const k = V.kBase(S.buildings.training);
+  const gains = [];
+  squadAll().forEach(p => {
+    if (p.injured) return;                       // травмований не тренується
+    const g = p.grow(p.slopeDay(ageF(p)) * k, ageF(p), S.focus);
+    p._dg = (p._dg || 0) + g; gains.push([p, g]);
+  });
+  /* академія тренується разом із клубом, на тій самій базі */
+  S.academy.candidates.forEach(c => { c.p.grow(c.p.slopeDay(ageF(c.p)) * k, ageF(c.p), S.focus) });
+  S.trained = `${S.season}-${S.round}`;
+  const total = gains.reduce((s, [, g]) => s + g, 0);
+  const top = gains.filter(([, g]) => g > 0.004).sort((a, b) => b[1] - a[1]).slice(0, 5);
+  $("#sheet").innerHTML = `<h2>Тренування проведено</h2>
+    <div class="s">база рівня ${S.buildings.training} · фокус «${V.ATTR[S.focus]}»</div>
+    <p style="font-size:13px;color:var(--muted);margin:0 0 12px">Разом команда додала <b style="color:var(--live)">${sgn2(total)}</b> сили.
+    ${top.length ? "Найбільше:" : "Усі гравці вже на своїй межі для свого віку — рости нікому."}</p>
+    ${top.length ? `<div class="plist">${top.map(([p, g]) => `<div class="p"><div class="pos">${p.pos()}</div>
+      <div class="pn"><b>${p.name}</b><i>${p.age} р · ${stars(p)}</i></div>
+      <div class="pv"><b>${f1(p.power())}</b><i class="gain">${sgn2(g)}</i></div></div>`).join("")}</div>` : ""}
+    <p style="font-size:11.5px;color:var(--dim);margin:10px 0 0">За день приріст малий — гравець рівномірно доростає до своєї межі за роки. За сезон із таких днів складаються помітні числа: підсумок видно в картці гравця.</p>
+    <button class="btn ghost sm" style="margin-top:14px" onclick="closeSheet()">Добре</button>`;
+  $("#modal").classList.add("on");
+  if (page === "team") renderTeam();
+  if (page === "home") renderHome();
+  save();
 }
 const getP = s => s === "GK" ? ME.gk : s[0] === "B" ? ME.bench[+s.slice(1)] : ME.xi[s];
 function setP(s, p){ if (s === "GK") ME.gk = p; else if (s[0] === "B") ME.bench[+s.slice(1)] = p; else ME.xi[s] = p }
@@ -351,25 +409,36 @@ function radarSVG(p){
   return `<svg class="radar" viewBox="-18 -2 222 190">${web}${axes}
     <polygon class="val" points="${vals}"/>${labels}</svg>`;
 }
+const peakTxt = pk => pk % 1 ? `${Math.floor(pk)}–${Math.ceil(pk)} років` : `${pk} років`;
+/* Що каже картка про ріст — простими словами, з тими самими числами, що рахує гра. */
+function growthText(p){
+  const a = ageF(p), line = p.line(a), pw = p.power();
+  const lim = `Межа — <b style="color:var(--gold)">${Math.round(p.pot)}</b>: може дорости до рівня Д${V.divOf(p.pot)}. Пік — у ${peakTxt(p.pk)}.`;
+  let now;
+  if (a >= p.pk + 4) now = "Пік позаду: більше не росте, повільно слабшають швидкість, сила й витривалість.";
+  else if (a >= p.pk + 1) now = "Пік позаду: більше не росте, але поки й не слабшає.";
+  else if (line - pw < 0.3) now = `Зараз він на своїй лінії віку (${f1(line)}) — росте рівно стільки, скільки дозволяє вік.`;
+  else now = `Для свого віку він міг би мати ${f1(line)} — до цієї лінії ще ${f1(line - pw)}, їх набирають тренуваннями.`;
+  const season = p.ss != null ? ` За цей сезон: <b style="color:var(--live)">${sgn(pw - p.ss)}</b>.` : "";
+  return `${lim} ${now}${season}`;
+}
 function openPlayer(slot){
   const p = getP(slot);
   const face = p.face;
-  const capNow = Math.round(p.pot * V.AGE_CAP(p.age));
   $("#sheet").innerHTML = `<div class="pc">
       <div class="face">${face ? `<img src="${face}" alt="">` : SILHOUETTE}</div>
       <div class="info">
         <h2>${p.name}</h2>
-        <div class="s">${p.pos()} · ${p.age} років · ${V.ROLE_UA[p.role]}</div>
+        <div class="s">${p.pos()} · ${p.age} ${yrs(p.age)} · ${V.ROLE_UA[p.role]}</div>
         <div>${stars(p)}</div>
-        <div class="pw"><b>${Math.round(p.power())}</b><i>сила в ролі</i></div>
+        <div class="pw"><b>${f1(p.power())}</b><i>сила в ролі</i></div>
       </div>
       ${radarSVG(p)}
     </div>
     <div class="sec">Характеристики</div>
     <div class="attrs">${V.ATTR.map((n, i) => `<div class="at"><span>${n}</span>
       <div class="b"><i style="width:${p.attrs[i]}%"></i></div><u>${Math.round(p.attrs[i])}</u></div>`).join("")}</div>
-    <div class="note"><h3>${V.ROLE_UA[p.role]}</h3><p>У своїй ролі — <b style="color:var(--gold)">${Math.round(p.power())}</b>.
-      Стеля за потенціалом ${Math.round(p.pot)}, вікова межа сьогодні ${capNow}.
+    <div class="note"><h3>${V.ROLE_UA[p.role]}</h3><p>${growthText(p)}
       Зарплата ${fmt(V.wageOf(p))} за сезон, оціночна вартість ${fmt(V.valueOf(p))}.</p></div>
     <div class="strip">${V.SLOTS.map(s => {
       const q = getP(s), f = q.face;
@@ -496,24 +565,40 @@ function academySlots(){
   const lvl = S.buildings.academy;
   return Math.max(3, Math.min(5, 3 + Math.floor((lvl - 1) / 5)));
 }
-function academyCeiling(){
-  return 28 + S.buildings.academy * 3.4;
+/* Шанс на кількість зірок у вихованця (1..6) залежно від рівня академії. Між
+   опорними рівнями — плавно. Чотири зірки й вище лишаються рідкісними навіть
+   на найвищому рівні, інакше за рік-два зірки втратили б сенс. Попередні
+   числа — уточнимо прогоном світу. */
+const ACAD_ANCH = [
+  [1,  [60, 30,  9,  1,  .05, .005]],
+  [5,  [35, 38, 22,  4.5, .4, .02]],
+  [10, [15, 30, 42, 11, 1.8, .1]],
+  [15, [ 8, 22, 45, 20, 4.5, .4]],
+  [20, [ 5, 15, 42, 28, 9,  1]],
+];
+function starChances(lvl){
+  lvl = Math.max(1, Math.min(20, lvl));
+  for (let i = 0; i < ACAD_ANCH.length - 1; i++){
+    const [a, wa] = ACAD_ANCH[i], [b, wb] = ACAD_ANCH[i + 1];
+    if (lvl <= b){ const t = (lvl - a) / (b - a); return wa.map((x, k) => x + (wb[k] - x) * t) }
+  }
+  return ACAD_ANCH[ACAD_ANCH.length - 1][1];
 }
-function genCandidate(freshIntake){
+function genCandidate(freshIntake, years){
   const isGK = V.R() < 1 / 7;
   const role = isGK ? "gk" : V.pick(ACAD_ROLES);
-  const baseLevel = Math.max(4, 6 + S.buildings.scouts * 0.9 + V.rf(-1.5, 1.5));   // сира сила у 16 років
-  const p = new V.P(V.uname(), role, baseLevel, isGK, 16, 0.30);
-  /* Не годиться формула P для дорослих підписань (power×1,08-1,55) — для
-     16-річного вона майже не лишає простору рости і стеля виходить
-     смішною (10-13). У скаутингу головна інтрига саме в розкиді потенціалу:
-     широкий множник, обрізаний стелею академії (майстер-промпт: рівень
-     академії обмежує стелю випускників). */
-  p.pot = Math.min(academyCeiling(), baseLevel * V.rf(2.0, 4.2));
+  const st = V.wpick([1, 2, 3, 4, 5, 6], starChances(S.buildings.academy));
+  const [lo, hi] = V.LIM_BAND[st - 1];
+  const lim = V.rf(lo, hi);
   /* новоприбулим у щойно збудований слот даємо розкид 0-2 роки — ніби
      академія вже щось готувала до тебе. Поповнення після сезону завжди
      стартує з повних 2 років (майстер-промпт: кандидати сидять 2 роки). */
-  return { p, yearsLeft: freshIntake ? 2 : V.ri(0, 2) };
+  const yearsLeft = years ?? (freshIntake ? 2 : V.ri(0, 2));
+  const age = 18 - yearsLeft;
+  const pk = V.PEAK[V.ROLE_POS[role]] ?? 25.5;
+  const cur = V.lineAt(lim, pk, age) * V.rf(0.85, 1.0);
+  const p = new V.P(V.uname(), role, cur, isGK, age, 0.30, lim);
+  return { p, yearsLeft };
 }
 function ensureAcademyStocked(freshIntake){
   const slots = academySlots();
@@ -522,8 +607,8 @@ function ensureAcademyStocked(freshIntake){
 function stockAcademyAtFounding(){
   S.academy.candidates = [];
   const slots = academySlots();
-  for (let i = 0; i < slots; i++) S.academy.candidates.push(genCandidate(false));
-  if (slots > 0) S.academy.candidates[0].yearsLeft = 0;   // хоч один готовий одразу — є кого підписати в перший сезон
+  /* хоч один готовий одразу — є кого підписати в перший сезон */
+  for (let i = 0; i < slots; i++) S.academy.candidates.push(genCandidate(false, i === 0 ? 0 : undefined));
 }
 function ageAcademyOneSeason(){
   S.academy.candidates.forEach(c => { c.yearsLeft = Math.max(0, c.yearsLeft - 1) });
@@ -532,6 +617,7 @@ function ageAcademyOneSeason(){
 function signCandidate(i){
   const c = S.academy.candidates[i];
   if (!c || c.yearsLeft > 0) return;
+  c.p.ss = c.p.power();
   ME.bench.push(c.p);
   S.academy.candidates.splice(i, 1);
   addNews("eye", `${c.p.name} з академії підписаний в основну команду.`);
@@ -548,7 +634,9 @@ function releaseCandidate(i){
 }
 function renderAcademy(){
   const box = $("#acadGrid"); if (!box) return;
-  $("#acadSub").textContent = `${S.academy.candidates.length} / ${academySlots()} слотів · рівень академії обмежує стелю ${Math.round(academyCeiling())}`;
+  const ch = starChances(S.buildings.academy), sum = ch.reduce((a, b) => a + b, 0);
+  const good = Math.round(ch.slice(2).reduce((a, b) => a + b, 0) / sum * 100);
+  $("#acadSub").textContent = `${S.academy.candidates.length} / ${academySlots()} слотів · академія рівня ${S.buildings.academy}: шанс на тризіркового й кращого — ${good} %`;
   if (!S.academy.candidates.length){
     box.innerHTML = `<div class="acad-empty">Вихованців поки немає.</div>`;
     return;
@@ -557,7 +645,7 @@ function renderAcademy(){
     const ready = c.yearsLeft <= 0;
     return `<div class="acad-card">
       <div class="h"><div class="pos">${c.p.pos()}</div><b>${c.p.name}</b></div>
-      <p>16 років · ${V.ROLE_UA[c.p.role]} · сила ${Math.round(c.p.power())} · стеля ${Math.round(c.p.pot)} · ${stars(c.p)}</p>
+      <p>${c.p.age} ${yrs(c.p.age)} · ${V.ROLE_UA[c.p.role]} · сила ${f1(c.p.power())} · межа ${Math.round(c.p.pot)} (рівень Д${V.divOf(c.p.pot)}) · ${stars(c.p)}</p>
       <div class="status ${ready ? "ready" : "wait"}">${ready ? "готовий підписати" : `ще ${c.yearsLeft} ${c.yearsLeft === 1 ? "сезон" : "сезони"} в академії`}</div>
       <div class="row">
         <button class="btn sm ${ready ? "" : "ghost"}" data-sign="${i}" ${ready ? "" : "disabled"}>Підписати</button>
@@ -572,7 +660,7 @@ function renderAcademyPage(){
   renderAcademy();
   const lvl = S.buildings.scouts;
   $("#scoutLvl").textContent = lvl;
-  $("#scoutNote").textContent = `Скаутський центр підіймає, з якою силою приходять нові вихованці — зараз стартова сила близько ${Math.round(Math.max(4, 6 + lvl * 0.9))}. Щоб підняти рівень, іди в Інфраструктуру.`;
+  $("#scoutNote").textContent = `Яких вихованців приносить академія, тепер залежить від рівня самої академії. Що саме даватиме скаутський центр — вирішимо окремо. Вихованці тренуються разом із командою на тренувальній базі.`;
 }
 
 /* =======================================================================
@@ -584,15 +672,16 @@ function renderAcademyPage(){
    занадто сильного гравця (більш ніж на 12 % вище стелі) не купиш. */
 let marketView = "buy";
 const MF = { pos: "all", min: "", max: "", sort: "power", only: false };
-function marketCeiling(){ return V.signingCeiling(S.division, S.buildings.stadium, S.buildings.commercial) }
-function signGate(power){ return power <= marketCeiling() * 1.12 }
-/* Гібридний гейт підпису: до стелі — згода, до +12 % — згода за більшу зарплату,
-   вище — відмова. Саме це робить ланцюг «золото → будівлі → репутація → підписи». */
+const marketTiers = () => V.signingTiers(S.division, S.buildings.stadium, S.buildings.commercial);
+function marketCeiling(){ return marketTiers().c }
+/* Гібридний гейт підпису: до стелі — згода, трохи вище (старі +12 %) — згода за
+   більшу зарплату, ще вище (старі +30 %) — переговори, далі — відмова. Межі
+   рахуються в старій шкалі, тож у дивізіонах вони такі самі, як були. */
 function gateOf(p){
-  const c = marketCeiling(), pw = p.power();
-  if (pw <= c) return { ok: true, prem: 1, bonus: 0, tag: "погодиться", cls: "ok" };
-  if (pw <= c * 1.12) return { ok: true, prem: 1.35, bonus: 0, tag: "за більшу з.п.", cls: "warn" };
-  if (pw <= c * 1.30) return { ok: true, offer: true, prem: 1.8, bonus: .30, tag: "переговори", cls: "offer" };
+  const t = marketTiers(), pw = p.power();
+  if (pw <= t.c) return { ok: true, prem: 1, bonus: 0, tag: "погодиться", cls: "ok" };
+  if (pw <= t.t1) return { ok: true, prem: 1.35, bonus: 0, tag: "за більшу з.п.", cls: "warn" };
+  if (pw <= t.t2) return { ok: true, offer: true, prem: 1.8, bonus: .30, tag: "переговори", cls: "offer" };
   return { ok: false, prem: 1, bonus: 0, tag: "відмовить", cls: "no" };
 }
 /* Що треба, щоб гравець погодився без надбавок: найменший рівень стадіону, при якому
@@ -610,23 +699,20 @@ function needText(p){
 const OTHER_CLUBS = ["Ла Роса","Альтаміра","Ріо Секо","Монтанья","Пуерто","Камповерде",
   "Сан-Ремо","Вальдес","Естрелья","Ель Пасо","Норте","Костаблан","Медіна","Сьєрра","Аврора"];
 let POOL = null, POOL_SEASON = -1;
-/* Сила слоту (primeLvl) — це якість тільки в піковому віці. Поточна сила молодого
-   гравця опускається за тією ж кривою AGE_CAP, що й тренування, а стеля (pot)
-   лишається прив'язана до primeLvl, а не до просілої поточної сили — інакше юнак
-   з високим потенціалом виглядав би безперспективним. */
+/* Гравці інших дивізіонів генеруються за тими самими правилами, що й команди:
+   сила — на рівні свого дивізіону, вік — такий, щоб межа була можливою,
+   зірки — з межі. Тоді на ринку вік, сила й зірки узгоджені. */
 function buildPool(){
   const out = [];
   for (let d = Math.max(1, S.division - 3); d <= Math.min(16, S.division + 2); d++){
     if (d === S.division) continue;
-    const ceil = V.CEIL[d] || 20, n = d < S.division ? 7 : 4;
+    const n = d < S.division ? 7 : 4;
     for (let i = 0; i < n; i++){
       const gk = Math.random() < .12;
       const role = gk ? "gk" : V.SPECS[Math.floor(Math.random() * V.SPECS.length)][1];
-      const age = V.ri(17, 33);
-      const primeLvl = ceil * (0.78 + Math.random() * 0.24);
-      const lvl = Math.max(4, primeLvl * V.AGE_CAP(age) * V.rf(0.92, 1.02));
+      const lvl = levelFor(d) * V.rf(0.85, 1.06);
+      const age = V.fitAge(lvl, role, V.ri(18, 33), V.limCapFor(lvl));
       const p = new V.P(V.uname(), role, lvl, gk, age);
-      p.pot = Math.min(99, Math.max(p.pot, primeLvl * V.rf(1.05, 1.3)));
       out.push({ club: OTHER_CLUBS[Math.floor(Math.random() * OTHER_CLUBS.length)], div: d, p });
     }
   }
@@ -672,7 +758,7 @@ function renderMarket(){
         : `<button class="btn sm" data-buy="1">Купити</button>`;
       return `<div class="mrow">
         <div class="pos">${r.p.pos()}</div>
-        <div class="pn"><b>${r.p.name}</b><i>${r.p.age} р · ${V.ROLE_UA[r.p.role]} · сила ${Math.round(r.p.power())}</i></div>
+        <div class="pn"><b>${r.p.name}</b><i>${r.p.age} р · ${V.ROLE_UA[r.p.role]} · сила ${Math.round(r.p.power())} · ${stars(r.p)}</i></div>
         <div class="club">${r.club}<u>Д${r.div}</u></div>
         <div class="gate ${g.cls}">${g.tag}${g.cls === "ok" ? "" : `<u>${needText(r.p)}</u>`}</div>
         <div class="price"><b>${fmt(due)}</b><i>з.п. ${fmt(wage)}/сезон</i></div>
@@ -724,6 +810,7 @@ function buyPlayer(row){
     POOL.splice(i, 1);
   }
   if (g.prem > 1) row.p.wagePrem = g.prem;
+  row.p.ss = row.p.power();
   ME.bench.push(row.p);
   S.money -= total;
   addNews("cap", `Куплено ${row.p.name} (Д${row.div}) у ${row.club} за ${fmt(total)}`);
@@ -736,7 +823,7 @@ function openOffer(row){
   const bonus = Math.round(price * g.bonus), total = price + comm + bonus;
   const wageNow = V.wageOf(row.p), wageAsk = Math.round(wageNow * g.prem);
   $("#sheet").innerHTML = `<h2>Переговори: ${row.p.name}</h2>
-    <div class="s">${row.p.pos()} · ${row.p.age} років · сила ${Math.round(row.p.power())} · Д${row.div}</div>
+    <div class="s">${row.p.pos()} · ${row.p.age} ${yrs(row.p.age)} · сила ${Math.round(row.p.power())} · ${stars(row.p)} · Д${row.div}</div>
     <div class="note"><h3>Він сильніший, ніж дозволяє твоя стеля підпису ${Math.round(marketCeiling())}</h3>
       <p>Піти в клуб нижчого рівня він погоджується лише на особливих умовах.</p></div>
     <div class="attrs" style="margin-top:14px;grid-template-columns:1fr">
@@ -851,6 +938,7 @@ function openMatch(){
   $("#comm").innerHTML = "";
   $("#startBtn").textContent = "Стартовий свисток"; $("#startBtn").style.display = "";
   ME.press = 1; ME.line = 1; ME.presence = 0; ME.actions = 0;
+  M.played = new Set(ME.onPitch());          // хто вийшов на поле — тому матч додає трохи росту
   initDots(); BALL.x = BALL.tx = .5; BALL.y = BALL.ty = .5;
   renderCtrl(); renderBench(); updBonus(); drawPitch(); renderSpeed();
   ensurePitchLoop();
@@ -902,6 +990,7 @@ function askSub(i){
   $$("#sheet .p").forEach(el => el.onclick = () => {
     const s = el.dataset.s, outP = ME.xi[s];
     ME.xi[s] = inP; ME.bench[i] = outP; ME.subsMade++;
+    if (M.played) M.played.add(inP);
     inP.fresh = 1; closeSheet(); renderBench(); act("склад");
     say(M.min, `Заміна: ${inP.name} замість ${outP.name}.`, "warn");
     if (!M.live) updBonus();
@@ -1127,6 +1216,10 @@ function finish(){
     const [gh, ga] = V.quickMatch(teamBy(h), teamBy(a));
     regResult(h, a, gh, ga, false);
   });
+  /* матч додає росту тим, хто грав (без фокуса — просто ігрова практика) */
+  (M.played || new Set()).forEach(p => {
+    p._dg = (p._dg || 0) + p.grow(p.slopeDay(ageF(p)) * V.MATCH_K, ageF(p));
+  });
   const diff = M.hm === ME ? M.hm.goals - M.aw.goals : M.aw.goals - M.hm.goals;
   const prize = diff > 0 ? 48000 : diff === 0 ? 22000 : 9000;
   S.money += prize;
@@ -1157,6 +1250,7 @@ function showReport(){
     <div class="plist">${best.map(p => `<div class="p"><div class="pos">${p.rating.toFixed(1)}</div>
       <div class="pn"><b>${p.name}</b><i>${p.pos()} · свіжість ${Math.round(p.fresh * 100)} %${p.injured ? ' · <span style="color:var(--bad)">травма</span>' : ""}</i></div>
       <div class="pv"><b>${Math.round(p.power())}</b></div></div>`).join("")}</div>
+    ${growthReport()}
     <div class="note" style="margin-top:12px"><h3>Бонус присутності</h3>
       <p>Дій під час гри: ${ME.actions}. Команда грала з надбавкою
       <b style="color:var(--gold)">+${(ME.presence * 100).toFixed(1).replace(".", ",")} %</b> до ефективної сили.
@@ -1164,16 +1258,75 @@ function showReport(){
     <button class="btn" style="margin-top:14px" onclick="closeSheet();nextRound()">Наступний тур</button>`;
   $("#modal").classList.add("on", "lock");
 }
+/* Приріст дня у звіті після матчу: тренування + матч. */
+function growthReport(){
+  const list = squadAll().filter(p => (p._dg || 0) > 0.004).sort((a, b) => b._dg - a._dg);
+  const total = squadAll().reduce((s, p) => s + (p._dg || 0), 0);
+  const why = trainedToday()
+    ? `Сьогодні було тренування (база рівня ${S.buildings.training}) і матч.`
+    : `Сьогодні тренування не було — гравці виросли тільки від матчу. Тренування проводиться в розділі «Команда».`;
+  return `<div class="lab" style="margin-top:12px">Приріст за день · разом ${sgn2(total)}</div>
+    <p style="font-size:11.5px;color:var(--dim);margin:0 0 8px">${why}</p>
+    ${list.length ? `<div class="plist">${list.slice(0, 5).map(p => `<div class="p"><div class="pos">${p.pos()}</div>
+      <div class="pn"><b>${p.name}</b><i>${p.age} р · ${stars(p)}</i></div>
+      <div class="pv"><b>${f1(p.power())}</b><i class="gain">${sgn2(p._dg)}</i></div></div>`).join("")}</div>` : ""}`;
+}
+/* Суперники-ШІ теж тренуються щодня — на базі, типовій для свого дивізіону. */
+const aiBase = d => Math.max(1, Math.min(15, 14 - d));
+function aiDay(){
+  const k = V.kBase(aiBase(S.division));
+  LEAGUE.forEach(t => { if (t === ME) return;
+    t.onPitch().forEach(p => p.grow(p.slopeDay(ageF(p)) * (k + V.MATCH_K), ageF(p)));
+    t.bench.forEach(p => p.grow(p.slopeDay(ageF(p)) * k, ageF(p)));
+  });
+}
+/* вільний агент — щоб склад не розвалився, коли ветерани завершують кар'єру */
+function freeAgent(role){
+  const gk = role === "gk";
+  const p = new V.P(V.uname(), role, levelFor(S.division) * 0.82, gk, V.ri(19, 22));
+  p.ss = p.power(); return p;
+}
+function retirePlayers(){
+  const gone = squadAll().filter(p => p.age >= p.ret);
+  if (!gone.length) return [];
+  ME.bench = ME.bench.filter(p => !gone.includes(p));
+  const take = fit => {
+    let best = -1, bv = -Infinity;
+    ME.bench.forEach((q, i) => { const v = fit(q); if (v > bv){ bv = v; best = i } });
+    return best >= 0 ? ME.bench.splice(best, 1)[0] : null;
+  };
+  if (gone.includes(ME.gk)) ME.gk = take(q => q.gk ? 100 + q.power() : q.powerIn("gk")) || freeAgent("gk");
+  V.SPECS.forEach(([slot, role]) => {
+    if (gone.includes(ME.xi[slot])) ME.xi[slot] = take(q => q.gk ? -1 : q.powerIn(role)) || freeAgent(role);
+  });
+  while (squadAll().length < 16) ME.bench.push(freeAgent(V.pick(Object.keys(V.ROLES))));
+  return gone;
+}
+/* кінець сезону: підсумок росту, старіння, завершення кар'єр, нові суперники */
+function endOfSeason(){
+  const sq = squadAll().filter(p => p.ss != null);
+  const grew = sq.map(p => [p, p.power() - p.ss]).sort((a, b) => b[1] - a[1]);
+  const sum = grew.reduce((s, [, g]) => s + g, 0);
+  if (grew.length) addNews("up", `Підсумок сезону ${S.season - 1}: склад разом додав ${sgn(sum)} сили. Найбільше виріс ${grew[0][0].name} — ${sgn(grew[0][1])}.`);
+  squadAll().forEach(p => p.age++);
+  S.academy.candidates.forEach(c => c.p.age++);
+  retirePlayers().forEach(p => addNews("cap", `${p.name} завершив кар'єру в ${p.age} ${yrs(p.age)}.`));
+  squadAll().forEach(p => { p.ss = p.power() });
+  buildWorld(true);
+  POOL = null;
+}
 function nextRound(){
   closeSheet();
-  [...ME.onPitch(), ...ME.bench].forEach(p => { p.train(S.focus);
+  [...ME.onPitch(), ...ME.bench].forEach(p => {
+    p.decline(ageF(p)); p._dg = 0;
     p.fresh = Math.min(1, p.fresh + .55); if (p.injured && V.R() < .5) p.injured = false });
-  LEAGUE.forEach(t => { if (t !== ME) [...t.onPitch(), ...t.bench].forEach(p => p.train(V.ri(0, 7))) });
+  aiDay();
   S.round++;
   if (S.round > 30){
     S.round = 1; S.season++;
     addNews("up", `Сезон ${S.season - 1} завершено. Починається сезон ${S.season}.`);
     Object.values(S.table).forEach(v => { v.p = v.w = v.d = v.l = v.gf = v.ga = 0 });
+    endOfSeason();
     ageAcademyOneSeason();
   }
   const wages = Math.round(ME.wageBill() / 30);
@@ -1191,13 +1344,14 @@ function addNews(icon, text){
   S.feed.unshift({ i: icon, b: text, t: `сезон ${S.season}, тур ${S.round}`, seen: false });
   S.feed = S.feed.slice(0, 20);
 }
-const sp = p => ({ n:p.name, r:p.role, g:p.gk, a:p.age, at:p.attrs, po:p.pot, gl:p.glass, pr:p.prof, fo:p.form, wp:p.wagePrem, fc:p.face });
+const sp = p => ({ n:p.name, r:p.role, g:p.gk, a:p.age, at:p.attrs, po:p.pot, gl:p.glass, pr:p.prof, fo:p.form, wp:p.wagePrem, fc:p.face, rt:p.ret, ss:p.ss });
 function serial(t){
   return { gk: sp(t.gk), xi: Object.fromEntries(Object.entries(t.xi).map(([k, p]) => [k, sp(p)])), bench: t.bench.map(sp) };
 }
 function mkPlayer(d){
   const p = new V.P(d.n, d.r, 25, d.g, d.a); p.attrs = d.at; p.pot = d.po;
   p.glass = d.gl; p.prof = d.pr; p.form = d.fo; if (d.wp) p.wagePrem = d.wp; if (d.fc) p.face = d.fc;
+  if (d.rt) p.ret = d.rt; if (d.ss != null) p.ss = d.ss;
   p.reset(); return p;
 }
 function hydrate(o, t){
@@ -1209,7 +1363,7 @@ function save(){
       club: S.club, division: S.division, season: S.season, round: S.round,
       money: S.money, gold: S.gold, focus: S.focus, table: S.table,
       results: S.results, feed: S.feed.slice(0, 12), buildings: S.buildings,
-      queue: S.queue, owned: S.owned, squad: serial(ME),
+      queue: S.queue, owned: S.owned, squad: serial(ME), trained: S.trained,
       academy: S.academy.candidates.map(c => ({ p: sp(c.p), yearsLeft: c.yearsLeft })),
     }));
   } catch(e){}
@@ -1223,6 +1377,7 @@ function load(){
       money: o.money, gold: o.gold, focus: o.focus, table: o.table || {},
       results: o.results || [], feed: o.feed || [], buildings: o.buildings || S.buildings,
       queue: o.queue || [], owned: o.owned || { crests: [o.club.crest], kits: [o.club.kit] },
+      trained: o.trained || "",
     });
     buildWorld();
     if (o.squad) hydrate(o.squad, ME);
@@ -1250,6 +1405,7 @@ $("#cgo").onclick = () => {
   S.club = { name, crest: newCrest, kit: newKit };
   S.owned = { crests: [newCrest], kits: [newKit] };
   buildWorld();
+  squadAll().forEach(p => { p.ss = p.power() });
   stockAcademyAtFounding();
   addNews("cap", "Президент купив клуб. Ти — новий менеджер.");
   addNews("eye", "Скаут склав список кандидатів на сезон");
