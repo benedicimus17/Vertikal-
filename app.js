@@ -384,7 +384,7 @@ function openPlayer(slot){
   $("#swapBtn").onclick = () => { picked = slot; closeSheet(); renderTeam() };
   $("#modal").classList.add("on");
 }
-function closeSheet(){ $("#modal").classList.remove("on") }
+function closeSheet(){ $("#modal").classList.remove("on", "lock"); $("#modal .sheet").scrollTop = 0 }
 window.closeSheet = closeSheet;
 $("#modal").onclick = e => { if (e.target.id === "modal") closeSheet() };
 
@@ -1162,7 +1162,7 @@ function showReport(){
       <b style="color:var(--gold)">+${(ME.presence * 100).toFixed(1).replace(".", ",")} %</b> до ефективної сили.
       Стеля — 4 %, і вона рахується всередині загальної стелі бонусів 12 %.</p></div>
     <button class="btn" style="margin-top:14px" onclick="closeSheet();nextRound()">Наступний тур</button>`;
-  $("#modal").classList.add("on");
+  $("#modal").classList.add("on", "lock");
 }
 function nextRound(){
   closeSheet();

@@ -350,8 +350,16 @@ tr.down td:first-child{box-shadow:inset 2px 0 0 var(--bad)}
 .modal{position:fixed;inset:0;z-index:70;background:rgba(4,7,10,.72);backdrop-filter:blur(6px);
        display:none;align-items:center;justify-content:center;padding:20px}
 .modal.on{display:flex}
-.sheet{width:100%;max-width:560px;max-height:88vh;overflow-y:auto;background:var(--ink-2);
+/* max-height від вікна, а не 88vh: коли гра розвернута через CSS (блокування повороту),
+   vh — це довга сторона телефона, і вікно виходило за екран без прокрутки. */
+.sheet{width:100%;max-width:560px;max-height:100%;overflow-y:auto;overscroll-behavior:contain;
+       -webkit-overflow-scrolling:touch;background:var(--ink-2);
        border:1px solid var(--line);border-radius:18px;padding:18px 20px 20px}
+.sheet .x{position:sticky;top:0;float:right;z-index:2;width:36px;height:36px;margin:-8px -10px 0 8px;
+          display:grid;place-items:center;border-radius:50%;background:rgba(12,19,27,.92);
+          border:1px solid var(--line)}
+.sheet .x svg{width:16px;height:16px;stroke:var(--text);stroke-width:2;fill:none;stroke-linecap:round}
+.modal.lock .x{display:none}
 .sheet h2{margin:0 0 3px;font-family:var(--display);font-size:24px;font-weight:600}
 .sheet .s{margin:0 0 14px;font-size:11px;color:var(--dim);font-weight:700;letter-spacing:.1em;text-transform:uppercase}
 .sheet:has(.pc){max-width:760px}
@@ -678,7 +686,8 @@ tr.down td:first-child{box-shadow:inset 2px 0 0 var(--bad)}
   </main>
 </div>
 
-<div class="modal" id="modal"><div class="sheet" id="sheet"></div></div>
+<div class="modal" id="modal"><div class="sheet"><button class="x" onclick="closeSheet()" aria-label="Закрити">
+  <svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button><div id="sheet"></div></div></div>
 
 <script src="engine.js"></script>
 <script src="app.js"></script>
