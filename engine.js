@@ -56,16 +56,6 @@ const duel=(a,b,bias=0,k=K)=>1/(1+Math.pow(10,-((a-b+bias)/k)));
    впираються в 99 і та сама різниця дає меншу перевагу. Заміряно: команда на
    дивізіон сильніша виграє 52–61 % матчів у будь-якому місці піраміди. */
 const CEIL=[0,99,92,86,80,75,70,65,60,55,50,45,40,35,30,25,20];
-/* Стара драбина лишається тільки для грошей: зарплата й ціна рахуються так, ніби
-   сила була в старій шкалі, тому гроші кожного дивізіону не змінились. */
-const OLD_CEIL=[0,99,88,78,70,62,55,49,44,39,35,31,28,25,22,20,20];
-function legacy(x){
-  for(let d=1;d<16;d++) if(x>=CEIL[d+1]){
-    const f=(x-CEIL[d+1])/(CEIL[d]-CEIL[d+1]);
-    return OLD_CEIL[d+1]+Math.min(1,f)*(OLD_CEIL[d]-OLD_CEIL[d+1]);
-  }
-  return x*OLD_CEIL[16]/CEIL[16];
-}
 /* рівень якого дивізіону ця сила: Д12 — від 35 до 40, Д11 — від 40 до 45 … */
 function divOf(x){ for(let d=16;d>=1;d--) if(x<=CEIL[d]+1e-9) return d; return 1 }
 
@@ -95,9 +85,10 @@ function limFor(y, age, pk){
   if(lim < S16/.7) lim = y/(.7+.3*f);
   return lim;
 }
-/* Сила тренування від рівня бази. Разом із матчами (0,25) дає частку лінії, яку
-   гравець встигає пройти: база 1 ≈ 0,6 · база 5 ≈ 0,85 · база 10 ≈ 1,15. */
-const kBase = lvl => .3 + .06*lvl;
+/* Сила тренування від рівня бази (ОСНОВА 2.3): база 1 — гравець розкриває ≈ 55 % таланту,
+   база 10 — ≈ 80 %, база 20 — повністю й може наздогнати, якщо відстав (разом із матчами 0,25).
+   Понад 20 — престиж, сила вже не росте. */
+const kBase = lvl => .30 + .55*(Math.min(20, Math.max(1, lvl)) - 1)/19;
 const MATCH_K = .25;
 /* Молодий гравець на рівні дивізіону обов'язково має високу межу — інакше він не
    був би таким сильним у свої роки. Щоб легенди не траплялись на кожному кроці,
@@ -343,62 +334,88 @@ function makeFixtures(names){
   return [...rounds, ...rounds.map(rd=>rd.map(([a,b])=>[b,a]))];
 }
 
-/* ---------- економіка (формули з docs/economy.html і ПЕРЕДАЧІ) ---------- */
-const ageWageK = a => a<=20?.75 : a<=23?.9 : a<=28?1 : a<=31?.85 : .6;
-const agePriceK= a => a<=20?1.6 : a<=23?1.35 : a<=25?1.2 : a<=28?1 : a<=31?.6 : .3;
+/* ---------- економіка (ОСНОВА.md, розділи 0 і 3) ----------
+   Одна мірка для всіх грошей — дохід розвиненого клубу дивізіону: скільки за сезон
+   заробляє клуб, у якого стадіон і комерційний відділ на рівні, типовому для дивізіону.
+   Від неї рахуються ціни, зарплати й стеля зарплат, тож вони ростуть разом із будівлями. */
 
-/* річна зарплата гравця */
-function wageOf(p){
-  /* сила й межа переводяться в стару шкалу — гроші дивізіонів лишились ті самі */
-  const pw = legacy(p.power()), lim = legacy(p.pot);
-  const potK = 1 + Math.max(0,(lim - pw))/140;
-  /* wagePrem — надбавка гравцеві, який погодився піти в клуб, слабший за його рівень
-     (гібридний гейт підпису: помірний розрив — згода за більшу зарплату). */
-  const prem = p.wagePrem || 1;
-  return Math.round(7.6 * Math.pow(pw, 2.2) * ageWageK(p.age) * potK * prem);
+/* типовий дохід дивізіону на старті: Д12 ≈ 450 000, ×1,3 на кожен дивізіон угору */
+const baseIncome = L => 450000 * Math.pow(1.3, 12 - L);
+function divisionIncome(d){ return Math.round(baseIncome(d)) }
+/* типовий рівень стадіону й комерційного відділу для дивізіону: Д12 — 4 … Д1 — 20 */
+const need = L => 4 + (12 - L) * 16 / 11;
+/* рівень дивізіону для сили (дробовий): 40 → 12, 45 → 11 … 99 → 1 */
+function levelOf(x){
+  if(x>=99) return 1;
+  for(let d=1;d<16;d++) if(x>=CEIL[d+1]) return d+(CEIL[d]-x)/(CEIL[d]-CEIL[d+1]);
+  return 16;
 }
-/* трансферна вартість */
-function valueOf(p){ return Math.round(wageOf(p) * 4.2 * agePriceK(p.age)) }
+/* сила, що відповідає дробовому рівню дивізіону (зворотне до levelOf) */
+function strengthAt(L){
+  L=Math.max(1,Math.min(16,L)); const d=Math.floor(L), f=L-d;
+  return d>=16 ? CEIL[16] : CEIL[d]-f*(CEIL[d]-CEIL[d+1]);
+}
+/* частини сезонного доходу. Квитки й спонсор ростуть з будівлями лише до «типовий + 2»:
+   завеликий стадіон стоїть напівпорожній */
+const PLACE_PRIZE=[[1,2,.489],[3,5,.333],[6,9,.244],[10,13,.178],[14,16,.1]];
+const ticketsSeason = (d, stadium)    => .30 * baseIncome(d) * (.5 + .25*Math.min(stadium, need(d)+2));
+const sponsorSeason = (d, commercial) => .45 * baseIncome(d) * (.75 + .25*Math.min(commercial, need(d)+2));
+const placePrize    = (d, pos)        => PLACE_PRIZE.find(([a,b])=>pos>=a&&pos<=b)[2] * baseIncome(d);
+const upkeepSeason  = (d, levels)     => baseIncome(d) * (.05 + .0006*levels);
+/* дохід розвиненого клубу дивізіону (L може бути дробовим) — мірка цін і зарплат */
+const devIncome = L => ticketsSeason(L, need(L)) + sponsorSeason(L, need(L)) + .244*baseIncome(L);
+/* стеля зарплат: 60 % від (половини доходу розвиненого клубу + половини власного) */
+function wageCap(d, ownIncome){ return Math.round(.6 * (devIncome(d)/2 + ownIncome/2)) }
 
-/* типовий сезонний дохід дивізіону: Д12 ≈ 450 000, ×1,3 на кожен дивізіон угору */
-function divisionIncome(d){ return Math.round(450000 * Math.pow(1.3, 12 - d)) }
-/* стеля зарплат: 60 % від (половина типового доходу дивізіону + половина власного) */
-function wageCap(d, ownIncome){ return Math.round(.6 * (divisionIncome(d)/2 + ownIncome/2)) }
+const ageW = a => a<=20?.6 : a<=24?.85 : a<=29?1 : a<=32?.9 : .75;
+const ageV = a => a<=20?1.3 : a<=23?1.2 : a<=26?1.1 : a<=29?1 : a<=31?.6 : .3;
+const youthK = a => a<=19?1 : a<=21?.7 : a<=23?.4 : 0;
+/* зарплата за сезон: 1,5 % доходу розвиненого клубу того рівня, якому відповідає сила.
+   Якщо в гравця є контракт — платимо зарплату з контракту. */
+function wageFor(p){ return Math.round(.015 * devIncome(levelOf(p.power())) * ageW(p.age) * (p.wagePrem || 1)) }
+function wageOf(p){ return p.wg != null ? p.wg : wageFor(p) }
+/* ціна: 14 % доходу розвиненого клубу його рівня (з поправкою на вік); молодий талант —
+   не менше 0,4 від ціни гравця, яким він стане */
+function valueOf(p){
+  return Math.round(Math.max(.14 * devIncome(levelOf(p.power())) * ageV(p.age),
+                             .4 * .14 * devIncome(levelOf(p.pot)) * youthK(p.age)));
+}
 
-/* будівлі */
+/* будівлі — вирішено: 135 000 × 1,27^(рівень−1), 4 год × 1,25^(рівень−1) */
 function buildCost(level){ return Math.round(135000 * Math.pow(1.27, level-1)) }
 function buildHours(level){ return +(4 * Math.pow(1.25, level-1)).toFixed(1) }
 
-/* сила зі старої шкали — у нову (зворотне до legacy) */
-function fromLegacy(o){
-  if(o>=99) return 99+(o-99)*(CEIL[1]-CEIL[2])/(OLD_CEIL[1]-OLD_CEIL[2]);
-  for(let d=1;d<16;d++) if(o>=OLD_CEIL[d+1] && OLD_CEIL[d]>OLD_CEIL[d+1]){
-    const f=(o-OLD_CEIL[d+1])/(OLD_CEIL[d]-OLD_CEIL[d+1]);
-    return CEIL[d+1]+f*(CEIL[d]-CEIL[d+1]);
-  }
-  return o*CEIL[15]/OLD_CEIL[15];
+/* Хто погоджується перейти (ОСНОВА 4.1), усе в дивізіонах.
+   Стеля — рівень твого дивізіону; кожні 4 рівні стадіону понад типовий — пів дивізіону
+   вгору, нижче типового — стеля нижча. До стелі — згода; до 1 дивізіону вище — за більшу
+   зарплату; до 2 — переговори, лише якщо стадіон не нижчий за типовий; далі — відмова.
+   Гравцям від 30 років розрив рахується на 1 менше. */
+const ceilLevel = (d, stadium) => d - .125*(stadium - need(d));
+function signTier(p, d, stadium){
+  let gap = ceilLevel(d, stadium) - levelOf(p.power());
+  if(p.age>=30) gap -= 1;
+  if(gap<=0) return { ok:true,  prem:1,    bonus:0,  gap, tag:"погодиться",     cls:"ok" };
+  if(gap<=1) return { ok:true,  prem:1.35, bonus:0,  gap, tag:"за більшу з.п.", cls:"warn" };
+  if(gap<=2 && stadium>=need(d)) return { ok:true, prem:1.8, bonus:.3, offer:true, gap, tag:"переговори", cls:"offer" };
+  return { ok:false, prem:1, bonus:0, gap, tag:"відмовить", cls:"no" };
 }
-/* Стеля підпису рахується в старій шкалі, як і було задумано: стеля дивізіону ×
-   (0,86 + 0,016×стадіон + 0,008×комерційний), не вище за дивізіон вище. У новій
-   шкалі множення на відсотки вгорі розтягнулось би на кілька дивізіонів, тому
-   спершу рахуємо по-старому, а потім переводимо в нову шкалу. */
-function signingTiers(d, stadium, commercial){
-  const base = OLD_CEIL[d] || 20;
-  const old  = Math.min(base * (.86 + .016*stadium + .008*commercial), OLD_CEIL[Math.max(1,d-1)] || 99);
-  return { c: fromLegacy(old), t1: fromLegacy(old*1.12), t2: fromLegacy(old*1.30) };
+/* який стадіон потрібен, щоб гравець погодився без надбавок */
+function stadiumFor(p, d){
+  const lv = levelOf(p.power()) + (p.age>=30 ? 1 : 0);
+  return Math.ceil(need(d) + 8*(d - lv));
 }
-function signingCeiling(d, stadium, commercial){ return signingTiers(d, stadium, commercial).c }
-/* комісія з трансферів: прогресивна 5-12 % залежно від суми угоди */
+/* комісія з трансферів: прогресивна 5–12 % залежно від суми угоди */
 function transferCommission(value){
-  const t = Math.max(0, Math.min(1, value / 300000));
+  const t = Math.max(0, Math.min(1, value / 3000000));
   return .05 + .07 * t;
 }
 
 window.VERT = {
   R, ri, rf, pick, wpick, reseed, get SEED(){return SEED},
   ATTR, ATTR_SHORT, ROLES, GK_W, ROLE_UA, ROLE_POS, SLOT_POS, SLOT_UA,
-  CEIL, OLD_CEIL, legacy, divOf, STAR_TOP, LIM_BAND, starsOfLim, PEAK, S16, s16Of, lineAt, limFor,
+  CEIL, divOf, STAR_TOP, LIM_BAND, starsOfLim, PEAK, S16, s16Of, lineAt, limFor,
   kBase, MATCH_K, fitAge, limCapFor, P, Team, SPECS, BENCHR, SLOTS,
   episode, quickMatch, makeFixtures, duel, uname, CLUBS,
-  wageOf, valueOf, divisionIncome, wageCap, buildCost, buildHours, signingCeiling, signingTiers, fromLegacy, transferCommission,
+  wageOf, wageFor, valueOf, divisionIncome, baseIncome, devIncome, need, levelOf, strengthAt, ceilLevel, signTier, stadiumFor,
+  ticketsSeason, sponsorSeason, placePrize, upkeepSeason, wageCap, buildCost, buildHours, transferCommission,
 };

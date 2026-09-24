@@ -258,6 +258,8 @@ tr.down td:first-child{box-shadow:inset 2px 0 0 var(--bad)}
 .subhead{font-size:10.5px;font-weight:800;letter-spacing:.16em;text-transform:uppercase;color:var(--gold);margin:20px 0 2px}
 .acad-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:12px;margin-top:8px}
 .testrow{display:flex;gap:8px;flex-wrap:wrap;padding:12px 14px}
+.rngst{color:var(--gold);font-weight:800;letter-spacing:.04em}
+.slink{color:var(--gold);font-weight:800;cursor:pointer;text-decoration:underline;text-underline-offset:2px}
 .wsum{font-size:12px;color:var(--muted);margin:0 0 10px;line-height:1.5}
 #worldBody tr{cursor:pointer}
 .trainrow{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin:0 0 12px}
@@ -279,6 +281,13 @@ tr.down td:first-child{box-shadow:inset 2px 0 0 var(--bad)}
 /* ===== ринок ===== */
 .mrow{display:flex;align-items:center;gap:12px;padding:10px 12px;border-bottom:1px solid var(--line-soft)}
 .mrow:last-child{border-bottom:none}
+/* на телефоні рядок ринку — у два поверхи: угорі гравець на всю ширину, внизу клуб, згода, ціна, кнопка */
+@media (max-width:1100px){
+  .mrow{flex-wrap:wrap;row-gap:8px}
+  .mrow .pn{flex:1 1 calc(100% - 60px)}
+  .mrow .club{margin-left:54px}
+  .mrow .price{margin-left:auto}
+}
 .mrow .club{width:96px;flex:none;font-size:10.5px;color:var(--dim);font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .mrow .price{text-align:right;flex:none;width:118px}
 .mrow .price b{display:block;font-size:14px;font-weight:800;font-family:var(--display);color:var(--gold-hi)}
@@ -641,6 +650,10 @@ tr.down td:first-child{box-shadow:inset 2px 0 0 var(--bad)}
       <h2 class="t">Академія</h2>
       <p class="sub" id="acadSub">—</p>
       <div class="acad-grid" id="acadGrid"></div>
+
+      <div class="subhead">Набір цього сезону</div>
+      <p class="sub" id="offerSub" style="margin:6px 0 10px">—</p>
+      <div class="acad-grid" id="acadOffers"></div>
 
       <div class="subhead">Скаутський центр</div>
       <div class="card" id="scoutCard" style="max-width:640px;margin-top:8px">
