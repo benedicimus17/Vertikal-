@@ -70,6 +70,7 @@ const S = {
   owned: { crests: [], kits: [] },
   academy: { candidates: [] },   // { p: Гравець, yearsLeft: 0..2 } — за майстер-промптом сидять 2 роки
   trained: "",                   // "сезон-тур", коли востаннє проведено тренування
+  test: { on: false, win: false },   // режим перевірки: миттєві матчі й будівлі
 };
 let ME = null, LEAGUE = [];
 
@@ -145,6 +146,7 @@ const NAV = [
   { id: "market", t: "Ринок",           s: "Трансфери",               i: '<path d="M4 8h13l-3-3M20 16H7l3 3"/>' },
   { id: "infra",  t: "Інфраструктура",  s: "Стадіон і будівлі",       i: BICON.commercial },
   { id: "league", t: "Ліга",            s: "Таблиця і кубок",         i: '<path d="M7 4h10v5a5 5 0 01-10 0V4z"/><path d="M7 6H4v1a3 3 0 003 3M17 6h3v1a3 3 0 01-3 3M10 19h4M12 14v5"/>' },
+  { id: "world",  t: "Світ",            s: "Уся піраміда",            i: '<circle cx="12" cy="12" r="8.5"/><path d="M3.5 12h17M12 3.5c2.6 2.6 3.8 5.4 3.8 8.5s-1.2 5.9-3.8 8.5c-2.6-2.6-3.8-5.4-3.8-8.5S9.4 6.1 12 3.5z"/>' },
   { id: "shop",   t: "Магазин",         s: "Емблеми і форми",         i: '<path d="M5 8h14l-1 12H6L5 8z"/><path d="M9 8V6a3 3 0 016 0v2"/>' },
   { id: "settings", t: "Налаштування",  s: "Гра і збереження",        i: '<circle cx="12" cy="12" r="3"/><path d="M12 3v2.5M12 18.5V21M3 12h2.5M18.5 12H21M5.6 5.6l1.8 1.8M16.6 16.6l1.8 1.8M18.4 5.6l-1.8 1.8M7.4 16.6l-1.8 1.8"/>' },
 ];
@@ -169,6 +171,7 @@ function show(p){
   if (p === "academy") renderAcademyPage();
   if (p === "market") renderMarket();
   if (p === "shop")   renderShop();
+  if (p === "world")  renderWorld();
   if (p === "settings") renderSettings();
   if (p === "match"){ if (!M.hm) openMatch(); else ensurePitchLoop() }
 }
@@ -218,7 +221,7 @@ document.addEventListener("touchend", e => {
 function renderTop(){
   $("#topCrest").innerHTML = crestSVG(S.club.crest);
   $("#topName").textContent = S.club.name;
-  $("#topSub").textContent = `Дивізіон ${S.division} · Сезон ${S.season} · Тур ${S.round}`;
+  $("#topSub").textContent = `Дивізіон ${S.division} · Сезон ${S.season} · Тур ${S.round}${S.test.on ? " · перевірка" : ""}`;
   $("#resMoney").textContent = fmt(S.money);
   $("#resGold").textContent = S.gold;
   const unread = S.feed.filter(f => !f.seen).length;
@@ -254,9 +257,12 @@ function renderHome(){
      <div><b>${n.b}</b><i>${n.t}</i></div></div>`).join("")
     || `<div class="row"><div><b>Новин поки немає</b><i>з'являться після першого туру</i></div></div>`;
   S.feed.forEach(n => n.seen = true);
+  $("#homePlay").textContent = S.test.on ? "Зіграти день миттєво" : "Грати матч";
+  $("#homeSeason").style.display = S.test.on ? "" : "none";
   renderTop();
 }
-$("#homePlay").onclick  = () => show("match");
+$("#homePlay").onclick  = () => S.test.on ? playInstant() : show("match");
+$("#homeSeason").onclick = () => simSeason();
 $("#homeSquad").onclick = () => show("team");
 $("#btnMail").onclick   = () => show("home");
 $("#btnProfile").onclick = () => show("settings");
@@ -342,18 +348,19 @@ function renderTeam(){
    ======================================================================= */
 const trainedToday = () => S.trained === `${S.season}-${S.round}`;
 function squadAll(){ return [ME.gk, ...Object.values(ME.xi), ...ME.bench] }
-function trainToday(){
+function trainToday(quiet){
   if (trainedToday()) return;
   const k = V.kBase(S.buildings.training);
   const gains = [];
   squadAll().forEach(p => {
     if (p.injured) return;                       // травмований не тренується
     const g = p.grow(p.slopeDay(ageF(p)) * k, ageF(p), S.focus);
-    p._dg = (p._dg || 0) + g; gains.push([p, g]);
+    p._tg = (p._tg || 0) + g; gains.push([p, g]);
   });
   /* академія тренується разом із клубом, на тій самій базі */
   S.academy.candidates.forEach(c => { c.p.grow(c.p.slopeDay(ageF(c.p)) * k, ageF(c.p), S.focus) });
   S.trained = `${S.season}-${S.round}`;
+  if (quiet) return;
   const total = gains.reduce((s, [, g]) => s + g, 0);
   const top = gains.filter(([, g]) => g > 0.004).sort((a, b) => b[1] - a[1]).slice(0, 5);
   $("#sheet").innerHTML = `<h2>Тренування проведено</h2>
@@ -532,7 +539,7 @@ function startBuild(id){
   if (canBuild(id)) return;
   const lvl = S.buildings[id] + 1;
   S.money -= V.buildCost(lvl);
-  S.queue.push({ id, lvl, endAt: Date.now() + V.buildHours(lvl) * MIN_PER_HOUR });
+  S.queue.push({ id, lvl, endAt: S.test.on ? Date.now() : Date.now() + V.buildHours(lvl) * MIN_PER_HOUR });
   addNews("build", `${BUILDINGS.find(b => b.id === id).name}: почалось будівництво рівня ${lvl}`);
   renderInfra(); renderTop(); save();
 }
@@ -851,6 +858,59 @@ function sellPlayer(p){
 }
 
 /* =======================================================================
+   СВІТ
+   Уся піраміда, по 16 команд у дивізіоні. Свій дивізіон — справжні суперники,
+   які грають з тобою весь сезон; інші — команди комп'ютера, які щосезону
+   оновлюються під рівень свого дивізіону.
+   ======================================================================= */
+let worldDiv = null;
+const WORLD = {};
+function worldTeams(d){
+  if (d === S.division) return LEAGUE;
+  const key = `${S.season}-${d}`;
+  if (!WORLD[key]){
+    V.reseed(424242 + S.season * 131 + d * 7919);
+    const names = [...new Set([...V.CLUBS, ...OTHER_CLUBS])].filter(n => n !== ME.name);
+    for (let i = names.length - 1; i > 0; i--){ const j = Math.floor(V.R() * (i + 1)); [names[i], names[j]] = [names[j], names[i]] }
+    WORLD[key] = names.slice(0, 16).map(n => new V.Team(n, levelFor(d) * V.rf(0.82, 1.1)));
+    V.reseed(Date.now() % 1000000007);
+  }
+  return WORLD[key];
+}
+function renderWorld(){
+  if (worldDiv == null) worldDiv = S.division;
+  $("#worldTabs").innerHTML = Array.from({ length: 12 }, (_, i) => i + 1).map(d =>
+    `<button class="${d === worldDiv ? "on" : ""}" data-d="${d}">Д${d}${d === S.division ? " ●" : ""}</button>`).join("");
+  $$("#worldTabs button").forEach(b => b.onclick = () => { worldDiv = +b.dataset.d; renderWorld() });
+  const teams = worldTeams(worldDiv);
+  const all = teams.flatMap(t => t.all());
+  const st = [0, 0, 0, 0, 0, 0, 0]; all.forEach(p => st[p.stars()]++);
+  const avgAge = all.reduce((s, p) => s + p.age, 0) / all.length;
+  const avgXI = teams.reduce((s, t) => s + t.rate(), 0) / teams.length;
+  $("#worldSub").textContent = `Дивізіон ${worldDiv}${worldDiv === S.division ? " — твій" : ""} · стеля сили ${V.CEIL[worldDiv]} · сезон ${S.season}`;
+  const rows = teams.map((t, i) => ({ t, i, r: t.rate(), age: t.all().reduce((s, p) => s + p.age, 0) / t.all().length,
+    top: t.all().filter(p => p.stars() >= 3).length })).sort((a, b) => b.r - a.r);
+  $("#worldBody").innerHTML = `<p class="wsum">Гравців ${all.length} · середня сила основи ${f1(avgXI)} · середній вік ${f1(avgAge)}<br>
+    Зірки: ${[1, 2, 3, 4, 5, 6].map(i => `${i}★ — ${Math.round(st[i] / all.length * 100)} %`).join(" · ")}</p>
+    <table><thead><tr><th class="l">Клуб</th><th>Сила основи</th><th>Вік</th><th>3★ і вище</th></tr></thead><tbody>
+    ${rows.map(x => `<tr class="${x.t === ME ? "me" : ""}" data-i="${x.i}"><td class="l">${x.t.name}</td>
+      <td>${f1(x.r)}</td><td>${f1(x.age)}</td><td>${x.top}</td></tr>`).join("")}</tbody></table>
+    <p class="wsum" style="margin-top:10px">${worldDiv === S.division
+      ? "Це твої справжні суперники: вони грають з тобою весь сезон."
+      : "Інші дивізіони — команди комп'ютера: щосезону вони оновлюються під рівень свого дивізіону."} Тап по клубу — його гравці.</p>`;
+  $$("#worldBody tr[data-i]").forEach(tr => tr.onclick = () => worldTeamSheet(teams[+tr.dataset.i]));
+}
+function worldTeamSheet(t){
+  const ps = t.all().sort((a, b) => b.power() - a.power());
+  $("#sheet").innerHTML = `<h2>${t.name}</h2><div class="s">сила основи ${f1(t.rate())} · Д${worldDiv}</div>
+    <div class="plist">${ps.map(p => `<div class="p"><div class="pos">${p.pos()}</div>
+      <div class="pn"><b>${p.name}</b><i>${p.age} ${yrs(p.age)} · ${stars(p)} · межа ${Math.round(p.pot)}</i></div>
+      <div class="pv"><b>${f1(p.power())}</b></div></div>`).join("")}</div>
+    <button class="btn ghost sm" style="margin-top:14px" onclick="closeSheet()">Закрити</button>`;
+  $("#modal").classList.add("on");
+}
+
+/* =======================================================================
    МАГАЗИН
    ======================================================================= */
 const CREST_PRICE = 120, KIT_PRICE = 150;
@@ -917,7 +977,15 @@ function renderSettings(){
     $("#modal").classList.add("on");
     $("#doReset").onclick = () => { localStorage.removeItem(SAVE_KEY); location.reload() };
   };
+  $("#testState").textContent = S.test.on ? "увімкнено" : "вимкнено";
+  $("#testOn").textContent = S.test.on ? "Вимкнути" : "Увімкнути";
+  $("#testWin").textContent = `Завжди перемагати: ${S.test.win ? "так" : "ні"}`;
+  $("#testOn").onclick = () => { S.test.on = !S.test.on; if (S.test.on) finishQueueNow(); renderSettings(); renderTop(); save() };
+  $("#testWin").onclick = () => { S.test.win = !S.test.win; renderSettings(); save() };
+  $("#testMoney").onclick = () => { S.money += 5000000; addNews("cap", "Режим перевірки: +5 000 000 на рахунок"); renderTop(); save() };
 }
+/* у режимі перевірки будівлі добудовуються одразу */
+function finishQueueNow(){ S.queue.forEach(q => { q.endAt = Date.now() }) }
 
 /* =======================================================================
    МАТЧ
@@ -930,7 +998,7 @@ function openMatch(){
   const f = myFixture();
   M.hm = f.home; M.aw = f.away; M.hm.home = true; M.aw.home = false;
   M.hm.reset(); M.aw.reset();
-  M.live = false; M.min = 0; M.ep = 0; M.half = 1; M.over = false; M.N = V.ri(64, 76);
+  M.live = false; M.min = 0; M.ep = 0; M.half = 1; M.over = false; M.forced = false; M.N = V.ri(64, 76);
   const [a] = M.hm.zMid(), [b] = M.aw.zMid(); M.ph = a / (a + b);
   $("#mh").textContent = M.hm.name; $("#ma").textContent = M.aw.name;
   $("#mgh").textContent = 0; $("#mga").textContent = 0;
@@ -1210,15 +1278,22 @@ function finish(){
   keepAwake(false);
   $("#mclock").className = "clock paused"; $("#mclock").textContent = "фінальний свисток";
   say(90, `Фінальний свисток. ${M.hm.name} ${M.hm.goals} : ${M.aw.goals} ${M.aw.name}`, "big");
+  settleRound();
+  setTimeout(showReport, 900);
+  renderTop(); save();
+}
+/* Підсумок туру: мій результат, решта матчів туру, приріст від матчу, призові. */
+function settleRound(){
   regResult(M.hm.name, M.aw.name, M.hm.goals, M.aw.goals, true);
   S.fixtures[(S.round - 1) % S.fixtures.length].forEach(([h, a]) => {
     if (h === ME.name || a === ME.name) return;
     const [gh, ga] = V.quickMatch(teamBy(h), teamBy(a));
     regResult(h, a, gh, ga, false);
   });
-  /* матч додає росту тим, хто грав (без фокуса — просто ігрова практика) */
+  /* матч додає росту тим, хто грав (без фокуса — просто ігрова практика);
+     тренувальна база тут ні до чого — вона впливає лише на тренування */
   (M.played || new Set()).forEach(p => {
-    p._dg = (p._dg || 0) + p.grow(p.slopeDay(ageF(p)) * V.MATCH_K, ageF(p));
+    p._mg = (p._mg || 0) + p.grow(p.slopeDay(ageF(p)) * V.MATCH_K, ageF(p));
   });
   const diff = M.hm === ME ? M.hm.goals - M.aw.goals : M.aw.goals - M.hm.goals;
   const prize = diff > 0 ? 48000 : diff === 0 ? 22000 : 9000;
@@ -1227,8 +1302,42 @@ function finish(){
     `${diff > 0 ? "Перемога" : diff === 0 ? "Нічия" : "Поразка"} ${M.hm.goals}:${M.aw.goals} — призові ${fmt(prize)}`);
   $("#startBtn").textContent = "Далі — наступний тур";
   $("#startBtn").style.display = "";
-  setTimeout(showReport, 900);
-  renderTop(); save();
+}
+/* Режим перевірки: матч дня грається миттєво, одразу звіт. */
+function playInstant(quiet){
+  if (M.live) return;
+  if (!M.hm) openMatch();
+  if (M.over){ if (!quiet) showReport(); return }       // цей день уже зіграно
+  V.quickMatch(M.hm, M.aw);
+  M.forced = false;
+  if (S.test.win){
+    const home = M.hm === ME, mine = home ? M.hm : M.aw, opp = home ? M.aw : M.hm;
+    if (mine.goals <= opp.goals){ mine.goals = opp.goals + 1; M.forced = true }
+  }
+  M.over = true; M.played = new Set(ME.onPitch());
+  $("#mgh").textContent = M.hm.goals; $("#mga").textContent = M.aw.goals;
+  $("#mclock").className = "clock paused"; $("#mclock").textContent = "зіграно миттєво";
+  settleRound();
+  if (!quiet){ showReport(); renderTop() }
+  save();
+}
+/* Режим перевірки: догнати сезон до кінця — щодня тренування, матч, наступний день. */
+function simSeason(){
+  if (M.live) return;
+  const s0 = S.season, d0 = S.division, rate0 = ME.rate();
+  let guard = 0;
+  while (S.season === s0 && guard++ < 40){
+    if (!trainedToday()) trainToday(true);
+    playInstant(true);
+    nextRound(true);
+  }
+  renderTop(); show("home"); save();
+  const moved = S.division < d0 ? `Підвищення — тепер Д${S.division}!` : S.division > d0 ? `Виліт — тепер Д${S.division}.` : `Лишаєшся в Д${S.division}.`;
+  $("#sheet").innerHTML = `<h2>Сезон ${s0} завершено</h2><div class="s">режим перевірки</div>
+    <p style="font-size:13px;color:var(--muted);margin:0 0 10px">${moved} Сила основи: ${f1(rate0)} → ${f1(ME.rate())}.</p>
+    <div class="plist">${S.feed.slice(0, 8).filter(n => !/зарплати/.test(n.b)).map(n => `<div class="p"><div class="pn"><b>${n.b}</b></div></div>`).join("")}</div>
+    <button class="btn ghost sm" style="margin-top:14px" onclick="closeSheet()">Добре</button>`;
+  $("#modal").classList.add("on");
 }
 function regResult(h, a, gh, ga, me){
   const H = S.table[h], A = S.table[a];
@@ -1243,6 +1352,7 @@ function showReport(){
   const scored = mine.filter(p => p.goals > 0);
   $("#sheet").innerHTML = `<h2>${M.hm.goals} : ${M.aw.goals}</h2>
     <div class="s">${M.hm.name} — ${M.aw.name} · тур ${S.round}</div>
+    ${M.forced ? `<p style="font-size:11.5px;color:var(--dim);margin:0 0 8px">Режим перевірки: рахунок підправлено на перемогу.</p>` : ""}
     ${scored.length ? `<div class="lab">Голи</div><div class="plist">${scored.map(p =>
       `<div class="p"><div class="pos">${p.goals}</div><div class="pn"><b>${p.name}</b>
        <i>${p.assists ? p.assists + " гольова · " : ""}${p.touches} дотиків</i></div></div>`).join("")}</div>` : ""}
@@ -1258,18 +1368,19 @@ function showReport(){
     <button class="btn" style="margin-top:14px" onclick="closeSheet();nextRound()">Наступний тур</button>`;
   $("#modal").classList.add("on", "lock");
 }
-/* Приріст дня у звіті після матчу: тренування + матч. */
+/* Приріст у звіті: від матчу — кожен, хто грав; тренування — окремим рядком. */
 function growthReport(){
-  const list = squadAll().filter(p => (p._dg || 0) > 0.004).sort((a, b) => b._dg - a._dg);
-  const total = squadAll().reduce((s, p) => s + (p._dg || 0), 0);
-  const why = trainedToday()
-    ? `Сьогодні було тренування (база рівня ${S.buildings.training}) і матч.`
-    : `Сьогодні тренування не було — гравці виросли тільки від матчу. Тренування проводиться в розділі «Команда».`;
-  return `<div class="lab" style="margin-top:12px">Приріст за день · разом ${sgn2(total)}</div>
-    <p style="font-size:11.5px;color:var(--dim);margin:0 0 8px">${why}</p>
-    ${list.length ? `<div class="plist">${list.slice(0, 5).map(p => `<div class="p"><div class="pos">${p.pos()}</div>
+  const played = [...(M.played || [])].sort((a, b) => (b._mg || 0) - (a._mg || 0));
+  const mTotal = played.reduce((s, p) => s + (p._mg || 0), 0);
+  const tTotal = squadAll().reduce((s, p) => s + (p._tg || 0), 0);
+  const train = trainedToday()
+    ? `Тренування сьогодні було: уся команда разом ${sgn2(tTotal)} — це окремо від матчу.`
+    : `Тренування сьогодні не було — воно проводиться в розділі «Команда».`;
+  return `<div class="lab" style="margin-top:12px">Приріст від матчу · усі, хто грав · разом ${sgn2(mTotal)}</div>
+    <div class="plist">${played.map(p => `<div class="p"><div class="pos">${p.pos()}</div>
       <div class="pn"><b>${p.name}</b><i>${p.age} р · ${stars(p)}</i></div>
-      <div class="pv"><b>${f1(p.power())}</b><i class="gain">${sgn2(p._dg)}</i></div></div>`).join("")}</div>` : ""}`;
+      <div class="pv"><b>${f1(p.power())}</b><i class="gain">${sgn2(p._mg || 0)}</i></div></div>`).join("")}</div>
+    <p style="font-size:11.5px;color:var(--dim);margin:8px 0 0">«+0,00» — гравець уже на лінії свого віку або пік позаду: рости йому нікуди. ${train}</p>`;
 }
 /* Суперники-ШІ теж тренуються щодня — на базі, типовій для свого дивізіону. */
 const aiBase = d => Math.max(1, Math.min(15, 14 - d));
@@ -1315,16 +1426,21 @@ function endOfSeason(){
   buildWorld(true);
   POOL = null;
 }
-function nextRound(){
+function nextRound(quiet){
   closeSheet();
   [...ME.onPitch(), ...ME.bench].forEach(p => {
-    p.decline(ageF(p)); p._dg = 0;
+    p.decline(ageF(p)); p._mg = 0; p._tg = 0;
     p.fresh = Math.min(1, p.fresh + .55); if (p.injured && V.R() < .5) p.injured = false });
   aiDay();
   S.round++;
   if (S.round > 30){
+    /* підвищення й виліт: двоє перших угору, троє останніх униз (Д12 — дно піраміди) */
+    const pos = tablePos(ME.name), was = S.division;
+    if (pos <= 2 && S.division > 1) S.division--;
+    else if (pos >= 14 && S.division < 12) S.division++;
     S.round = 1; S.season++;
-    addNews("up", `Сезон ${S.season - 1} завершено. Починається сезон ${S.season}.`);
+    addNews("up", `Сезон ${S.season - 1} завершено: ${pos} місце. ` +
+      (S.division < was ? `Підвищення — тепер Дивізіон ${S.division}!` : S.division > was ? `Виліт у Дивізіон ${S.division}.` : `Лишаємось у Дивізіоні ${S.division}.`));
     Object.values(S.table).forEach(v => { v.p = v.w = v.d = v.l = v.gf = v.ga = 0 });
     endOfSeason();
     ageAcademyOneSeason();
@@ -1333,6 +1449,7 @@ function nextRound(){
   S.money -= wages;
   addNews("cap", `Тижневі зарплати списано: ${fmt(wages)}`);
   M.hm = null;
+  if (quiet) return;
   openMatch(); renderTop(); show("home"); save();
 }
 window.nextRound = nextRound;
@@ -1363,7 +1480,7 @@ function save(){
       club: S.club, division: S.division, season: S.season, round: S.round,
       money: S.money, gold: S.gold, focus: S.focus, table: S.table,
       results: S.results, feed: S.feed.slice(0, 12), buildings: S.buildings,
-      queue: S.queue, owned: S.owned, squad: serial(ME), trained: S.trained,
+      queue: S.queue, owned: S.owned, squad: serial(ME), trained: S.trained, test: S.test,
       academy: S.academy.candidates.map(c => ({ p: sp(c.p), yearsLeft: c.yearsLeft })),
     }));
   } catch(e){}
@@ -1377,7 +1494,7 @@ function load(){
       money: o.money, gold: o.gold, focus: o.focus, table: o.table || {},
       results: o.results || [], feed: o.feed || [], buildings: o.buildings || S.buildings,
       queue: o.queue || [], owned: o.owned || { crests: [o.club.crest], kits: [o.club.kit] },
-      trained: o.trained || "",
+      trained: o.trained || "", test: o.test || { on: false, win: false },
     });
     buildWorld();
     if (o.squad) hydrate(o.squad, ME);
