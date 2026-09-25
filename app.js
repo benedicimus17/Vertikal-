@@ -6,9 +6,11 @@ const V = window.VERT;
 const $  = s => document.querySelector(s);
 const $$ = s => [...document.querySelectorAll(s)];
 const fmt = n => Math.round(n).toLocaleString("uk-UA").replace(/,/g, " ");
-/* vert3: нова шкала сили, зірки й ріст. Старе збереження vert2 лишається в пам'яті
-   телефону, але новій версії не підходить — клуб створюється заново. */
-const SAVE_KEY = "vert3";
+/* vert4: основа гри (гроші, контракти, скаутинг, набір в академію). Старі збереження
+   лишаються в пам'яті телефону, але новій версії не підходять — клуб створюється заново. */
+const SAVE_KEY = "vert4";
+/* номер версії видно внизу меню — щоб на телефоні одразу було ясно, що відкрилось */
+const VERSION = "v17";
 
 /* =======================================================================
    ЕМБЛЕМИ І ФОРМИ (малюються кодом, у кожного клуба свої)
@@ -163,7 +165,7 @@ function buildRail(){
   $("#rail").innerHTML = NAV.map(n =>
     `<button data-p="${n.id}" class="${n.id === page ? "on" : ""}">
        <svg viewBox="0 0 24 24">${n.i}</svg><span><b>${n.t}</b><i>${n.s}</i></span>
-     </button>`).join("") + '<span class="grow"></span><span class="ver">Прототип · 0.2</span>';
+     </button>`).join("") + '<span class="grow"></span><span class="ver">Версія ' + VERSION + '</span>';
   $$("#rail button").forEach(b => b.onclick = () => show(b.dataset.p));
 }
 function show(p){
