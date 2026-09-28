@@ -357,15 +357,19 @@ function strengthAt(L){
 }
 /* частини сезонного доходу. Квитки й спонсор ростуть з будівлями лише до «типовий + 2»:
    завеликий стадіон стоїть напівпорожній */
-const PLACE_PRIZE=[[1,2,.489],[3,5,.333],[6,9,.244],[10,13,.178],[14,16,.1]];
 const ticketsSeason = (d, stadium)    => .30 * baseIncome(d) * (.5 + .25*Math.min(stadium, need(d)+2));
 const sponsorSeason = (d, commercial) => .45 * baseIncome(d) * (.75 + .25*Math.min(commercial, need(d)+2));
-const placePrize    = (d, pos)        => PLACE_PRIZE.find(([a,b])=>pos>=a&&pos<=b)[2] * baseIncome(d);
 const upkeepSeason  = (d, levels)     => baseIncome(d) * (.05 + .0006*levels);
 /* дохід розвиненого клубу дивізіону (L може бути дробовим) — мірка цін і зарплат */
 const devIncome = L => ticketsSeason(L, need(L)) + sponsorSeason(L, need(L)) + .244*baseIncome(L);
 /* стеля зарплат: 60 % від (половини доходу розвиненого клубу + половини власного) */
 function wageCap(d, ownIncome){ return Math.round(.6 * (devIncome(d)/2 + ownIncome/2)) }
+/* призові за місце (ОСНОВА 3.4, варіант Б): частка доходу розвиненого клубу — 1-ше місце дає
+   на 40 % більше грошей за сезон, ніж 16-те, тож важить, як ти граєш */
+const PLACE_PRIZE=[[1,2,.40],[3,5,.28],[6,9,.18],[10,13,.09],[14,16,.02]];
+const placePrize = (d, pos) => PLACE_PRIZE.find(([a,b])=>pos>=a&&pos<=b)[2] * devIncome(d);
+/* контракт на 1–4 роки: коротший дорожчий за рік, довший дешевший (ОСНОВА, ПЛАН 43) */
+const CONTRACT_K = { 1: 1.15, 2: 1.07, 3: 1.00, 4: 0.95 };
 
 const ageW = a => a<=20?.6 : a<=24?.85 : a<=29?1 : a<=32?.9 : .75;
 const ageV = a => a<=20?1.3 : a<=23?1.2 : a<=26?1.1 : a<=29?1 : a<=31?.6 : .3;
@@ -381,9 +385,10 @@ function valueOf(p){
                              .4 * .14 * devIncome(levelOf(p.pot)) * youthK(p.age)));
 }
 
-/* будівлі — вирішено: 135 000 × 1,27^(рівень−1), 4 год × 1,25^(рівень−1) */
+/* будівлі: 135 000 × 1,27^(рівень−1); час 8 год × 1,25^(рівень−1) — подвоєно 26.09, щоб прискорення
+   за золото мало сенс (ОСНОВА 3.4) */
 function buildCost(level){ return Math.round(135000 * Math.pow(1.27, level-1)) }
-function buildHours(level){ return +(4 * Math.pow(1.25, level-1)).toFixed(1) }
+function buildHours(level){ return +(8 * Math.pow(1.25, level-1)).toFixed(1) }
 
 /* Хто погоджується перейти (ОСНОВА 4.1), усе в дивізіонах.
    Стеля — рівень твого дивізіону; кожні 4 рівні стадіону понад типовий — пів дивізіону
@@ -417,5 +422,5 @@ window.VERT = {
   kBase, MATCH_K, fitAge, limCapFor, P, Team, SPECS, BENCHR, SLOTS,
   episode, quickMatch, makeFixtures, duel, uname, CLUBS,
   wageOf, wageFor, valueOf, divisionIncome, baseIncome, devIncome, need, levelOf, strengthAt, ceilLevel, signTier, stadiumFor,
-  ticketsSeason, sponsorSeason, placePrize, upkeepSeason, wageCap, buildCost, buildHours, transferCommission,
+  ticketsSeason, sponsorSeason, placePrize, upkeepSeason, wageCap, buildCost, buildHours, transferCommission, CONTRACT_K,
 };

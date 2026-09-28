@@ -278,6 +278,63 @@ tr.down td:first-child{box-shadow:inset 2px 0 0 var(--bad)}
 .acad-empty{grid-column:1/-1;padding:16px;text-align:center;color:var(--dim);font-size:12.5px;
             background:rgba(17,24,35,.4);border:1px dashed var(--line);border-radius:12px}
 
+/* ===== ринок: картки ===== */
+.mgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(240px,100%),1fr));gap:10px}
+.mcard{min-width:0;background:rgba(17,24,35,.72);border:1px solid var(--line-soft);border-radius:14px;padding:11px 12px;display:flex;flex-direction:column;gap:8px}
+.mtop{display:flex;align-items:center;gap:10px}
+.av{width:42px;height:42px;flex:none;border-radius:50%;overflow:hidden;display:grid;place-items:center;
+    background:linear-gradient(160deg,#1A2636,#0C131B);border:2px solid var(--gold-lo)}
+.av img{width:100%;height:100%;object-fit:cover;display:block}
+.av span{font-size:10px;font-weight:800;color:var(--gold)}
+.mn{flex:1;min-width:0}
+.mn b{display:block;font-size:13px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.mn i{display:block;font-style:normal;font-size:10.5px;color:var(--dim);font-weight:700;margin-bottom:1px}
+.big{text-align:center;flex:none;min-width:34px}
+.big b{display:block;font-family:var(--display);font-size:24px;line-height:1;color:var(--gold-hi)}
+.big i{display:block;font-style:normal;font-size:9px;color:var(--dim);font-weight:800;letter-spacing:.1em;text-transform:uppercase}
+.mmeta{display:flex;align-items:center;justify-content:space-between;gap:8px;font-size:10.5px;color:var(--dim);font-weight:700}
+.mmeta>span:first-child{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.mneed{font-size:10px;color:var(--dim);font-weight:700;margin-top:-4px}
+.mfoot{display:flex;align-items:center;justify-content:space-between;gap:8px}
+.mfoot .price b{display:block;font-size:15px;font-weight:800;font-family:var(--display);color:var(--gold-hi)}
+.mfoot .price i{font-style:normal;display:block;font-size:10px;color:var(--dim);font-weight:700}
+.mcard .gate{flex:none;font-size:9.5px;font-weight:800;letter-spacing:.04em;text-transform:uppercase;padding:3px 6px;border-radius:6px;border:1px solid}
+.mcard .gate.ok{color:var(--live);border-color:rgba(74,222,128,.28);background:rgba(74,222,128,.08)}
+.mcard .gate.warn{color:var(--warn);border-color:rgba(224,112,60,.3);background:rgba(224,112,60,.08)}
+.mcard .gate.offer{color:var(--gold-hi);border-color:var(--hair);background:rgba(217,169,60,.09)}
+.mcard .gate.no{color:var(--bad);border-color:rgba(224,90,74,.28);background:rgba(224,90,74,.07)}
+.mcard .slink{font-size:11px;align-self:flex-start}
+/* ===== вікно контракту ===== */
+.cterms{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}
+.cterm{display:flex;flex-direction:column;gap:2px;padding:10px 8px;border-radius:12px;text-align:center;
+       background:rgba(17,24,35,.8);border:1px solid var(--line)}
+.cterm:not([disabled]):hover{border-color:var(--hair);background:rgba(217,169,60,.08)}
+.cterm[disabled]{opacity:.45;cursor:default}
+.cterm b{font-size:14px;font-weight:800;color:var(--gold-hi)}
+.cterm i{font-style:normal;font-size:9.5px;color:var(--dim);font-weight:700}
+.cterm u{text-decoration:none;font-size:12.5px;font-weight:800;margin-top:4px}
+.cterm s{text-decoration:none;font-size:9.5px;color:var(--dim);font-weight:700}
+@media (max-width:560px){ .cterms{grid-template-columns:1fr 1fr} }
+/* ===== підсумок сезону ===== */
+.ftot{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:10px}
+.ftot div{padding:9px 10px;border-radius:11px;background:rgba(17,24,35,.8);border:1px solid var(--line)}
+.ftot i{display:block;font-style:normal;font-size:9.5px;color:var(--dim);font-weight:800;letter-spacing:.1em;text-transform:uppercase}
+.ftot b{display:block;font-family:var(--display);font-size:19px;margin-top:2px}
+.ftot b.plus{color:var(--live)} .ftot b.minus{color:var(--bad)}
+/* ===== перетягування у складі ===== */
+.tk{touch-action:none}
+.tk.dragging,.p.dragging{opacity:.35}
+.p.hold{background:rgba(217,169,60,.12)}
+.tk.dropon .c{border-color:var(--gold-hi);box-shadow:0 0 0 4px rgba(240,206,122,.45)}
+.p.dropon{background:rgba(217,169,60,.16);box-shadow:inset 3px 0 0 var(--gold)}
+.tk.ctl .c{box-shadow:0 0 0 2px rgba(224,112,60,.55)}
+.ctw{color:var(--warn)}
+.dghost{position:absolute;z-index:60;pointer-events:none;transform:translate(-50%,-50%);width:48px;height:48px;border-radius:50%;
+        display:grid;place-items:center;background:linear-gradient(160deg,#2A3A50,#101924);border:2px solid var(--gold-hi);
+        box-shadow:0 10px 24px rgba(0,0,0,.6)}
+.dghost b{font-family:var(--display);font-size:18px;color:var(--gold-hi);line-height:1}
+.dghost i{position:absolute;top:100%;margin-top:3px;font-style:normal;font-size:10px;font-weight:800;color:#fff;white-space:nowrap;text-shadow:0 1px 3px #000}
+
 /* ===== ринок ===== */
 .mrow{display:flex;align-items:center;gap:12px;padding:10px 12px;border-bottom:1px solid var(--line-soft)}
 .mrow:last-child{border-bottom:none}
@@ -600,11 +657,11 @@ tr.down td:first-child{box-shadow:inset 2px 0 0 var(--bad)}
       <p class="sub" id="teamSub">—</p>
       <div class="cols">
         <div>
-          <div class="lab">Основа · тап по гравцю — картка, у ній «Поміняти місцями»</div>
+          <div class="lab">Основа · тап — картка гравця · перетягни на іншого — поміняти місцями</div>
           <div class="pitchbox" id="teamPitch"></div>
         </div>
         <div>
-          <div class="lab">Запас</div>
+          <div class="lab">Запас · затримай палець і тягни на поле</div>
           <div class="plist" id="subs"></div>
           <div class="lab" style="margin-top:14px">Тренування дня · на чому фокус</div>
           <div class="tabs" id="trainTabs" style="flex-wrap:wrap"></div>
@@ -622,6 +679,7 @@ tr.down td:first-child{box-shadow:inset 2px 0 0 var(--bad)}
       <p class="sub" id="marketSub">—</p>
       <div class="tabs" id="marketTabs">
         <button data-v="buy" class="on">Купити</button>
+        <button data-v="free">Вільні агенти</button>
         <button data-v="sell">Продати</button>
       </div>
       <div class="mfilters" id="mfilters">
@@ -632,6 +690,14 @@ tr.down td:first-child{box-shadow:inset 2px 0 0 var(--bad)}
           <option value="mid">Півзахисники</option>
           <option value="att">Нападники</option>
         </select>
+        <select id="fStars" aria-label="Зірки">
+          <option value="0">Усі зірки</option>
+          <option value="2">від 2 ★</option>
+          <option value="3">від 3 ★</option>
+          <option value="4">від 4 ★</option>
+          <option value="5">від 5 ★</option>
+          <option value="6">6 ★</option>
+        </select>
         <span class="rng">сила
           <input id="fMin" type="number" inputmode="numeric" placeholder="від" min="1" max="99">
           <input id="fMax" type="number" inputmode="numeric" placeholder="до" min="1" max="99">
@@ -640,6 +706,7 @@ tr.down td:first-child{box-shadow:inset 2px 0 0 var(--bad)}
           <option value="power">Спершу найсильніші</option>
           <option value="price">Спершу найдешевші</option>
           <option value="age">Спершу наймолодші</option>
+          <option value="stars">Спершу найбільше зірок</option>
         </select>
         <label class="chk"><input id="fOnly" type="checkbox"> лише ті, що погодяться</label>
       </div>
@@ -672,7 +739,7 @@ tr.down td:first-child{box-shadow:inset 2px 0 0 var(--bad)}
         <div class="hd"><span>Черга будівництва</span><span class="r">дві черги</span></div>
         <div id="qlist"></div>
       </div>
-      <div class="note" style="margin-top:12px"><h3>Час у прототипі стиснутий</h3><p>У грі рівень будується 4 × 1,25<sup>рівень−1</sup> годин. Щоб ти могла це помацати сьогодні, у прототипі година будівництва триває хвилину.</p></div>
+      <div class="note" style="margin-top:12px"><h3>Час у прототипі стиснутий</h3><p>У грі рівень будується 8 × 1,25<sup>рівень−1</sup> годин. Щоб ти могла це помацати сьогодні, у прототипі година будівництва триває хвилину.</p></div>
     </section>
 
     <section class="sc" id="sc-league">
