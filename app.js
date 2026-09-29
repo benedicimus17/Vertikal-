@@ -8,9 +8,9 @@ const $$ = s => [...document.querySelectorAll(s)];
 const fmt = n => Math.round(n).toLocaleString("uk-UA").replace(/,/g, " ");
 /* vert6: новий розподіл доходу, зарплати, піраміда. Старі збереження лишаються в пам'яті
    телефону, але новій версії не підходять — клуб створюється заново. */
-const SAVE_KEY = "vert6";
+const SAVE_KEY = "vert7";
 /* номер версії видно внизу меню — щоб на телефоні одразу було ясно, що відкрилось */
-const VERSION = "v19";
+const VERSION = "v20";
 
 /* =======================================================================
    ЕМБЛЕМИ І ФОРМИ (малюються кодом, у кожного клуба свої)
@@ -65,22 +65,27 @@ const CREST_COUNT = 20, KIT_COUNT = 8;
 const S = {
   club: { name: "", crest: 0, kit: 0 },
   division: 12, season: 1, round: 1,
-  money: 1250000, gold: 250, focus: 0,
+  money: 1250000, gold: 100, focus: 0,
   table: {}, results: [], feed: [],
   buildings: { stadium: 3, training: 2, academy: 1, scouts: 1, medical: 1, commercial: 1 },
   queue: [],
   owned: { crests: [], kits: [] },
-  academy: { candidates: [], offers: [] },   // вихованці { p, yearsLeft } і набір сезону від скаута
+  academy: { candidates: [], offers: [] },   // вихованці { p } (готовність p.rd 0–60, картки p.cd, здібності p.abl/p.abp) і набір сезону від скаута
   trained: "",                   // "сезон-тур", коли востаннє проведено тренування
   test: { on: false, win: false },   // режим перевірки: миттєві матчі й будівлі
   fin: { tickets: 0, sponsor: 0, merch: 0, match: 0, prize: 0, sales: 0, wages: 0, upkeep: 0, build: 0, buys: 0 },  // гроші за сезон
-  scout: null,                   // { season, left } — звіти скаута на сезон
+  scout: { left: 10 },           // { left } — звіти скаута: 10 на старті, далі щодня від скаутського центру
   scouted: null,                 // { season, map: ім'я → що відкрив скаут } — щоб перезапуск не стирав
   taken: null,                   // { season, names } — кого вже купили в цьому сезоні
   lastSeason: null,              // підсумок останнього сезону для вікна кінця сезону
   fa: [],                        // вільні агенти: гравці, у яких скінчився контракт { p, div, from }
   sys: [],                       // продані системі — система виставляє їх на ринок за повну вартість { p, div }
   remind: 0,                     // сезон, у якому вже нагадали про кінець контрактів
+  lineupAt: null,                // день (сезон×100 + тур), коли менеджер сам ставив чи підтверджував склад
+  kits: { g: 10, r: 5, day: 0, gUsed: 0, rUsed: [] },   // аптечки: зелені (свіжість), червоні (травма); ліміти за день
+  login: { last: "", streak: 0, tok: 0, pending: null },  // серія входу: остання дата, днів підряд, жетони незгоряння, нагорода, яку ще не забрали
+  exch: { season: 0, pct: 0 },   // обмін золота на гроші: скільки відсотків доходу вже взято цього сезону
+  q3: 0,                         // сезон, на який куплена третя черга будівництва
 };
 let ME = null, LEAGUE = [];
 
@@ -255,6 +260,7 @@ const NEWS_ICON = {
   up:   '<path d="M12 19V5M6 11l6-6 6 6"/>',
   build:'<path d="M4 20V9l6-4 6 4v11"/><path d="M8 20v-4h4v4M20 20V13l-4-2"/>',
   eye:  '<circle cx="11" cy="11" r="6"/><path d="M20 20l-4.5-4.5"/>',
+  inj:  '<rect x="4" y="4" width="16" height="16" rx="3"/><path d="M12 8v8M8 12h8"/>',
 };
 function renderHome(){
   const f = myFixture(), opp = f.isHome ? f.away : f.home;
@@ -276,6 +282,7 @@ function renderHome(){
   S.feed.forEach(n => n.seen = true);
   $("#homePlay").textContent = S.test.on ? "Зіграти день миттєво" : "Грати матч";
   $("#homeSeason").style.display = S.test.on ? "" : "none";
+  homeRewardBlock();
   renderTop();
 }
 $("#homePlay").onclick  = () => S.test.on ? playInstant() : show("match");
@@ -296,17 +303,22 @@ const sgn2 = x => (x >= 0 ? "+" : "−") + Math.abs(x).toFixed(2).replace(".", "
 /* відмінок після числа: 1 перемога, 2 перемоги, 5 перемог */
 const pl = (n, one, few, many) => { const a = n % 10, b = n % 100;
   return a === 1 && b !== 11 ? one : a >= 2 && a <= 4 && (b < 12 || b > 14) ? few : many };
+const dayW = n => pl(n, "день", "дні", "днів");
 const yrs = n => { const a = n % 10, b = n % 100;
   return a === 1 && b !== 11 ? "рік" : a >= 2 && a <= 4 && (b < 12 || b > 14) ? "роки" : "років" };
 /* вік усередині сезону: з кожним туром гравець трохи старший — лінія росту рухається плавно */
 const ageF = p => p.age + (S.round - 1) / 30;
+/* позиція з флангом: «КЗ п» — правий, «ВНГ л» — лівий */
+const posLbl = p => p.pos() + (p.side ? (p.side === "R" ? " п" : " л") : "");
+/* як гравець знає місце в складі, у відсотках (100 — своя позиція) */
+const famPct = (p, slot) => Math.round(V.fam(p, slot) * 100);
 function prow(p, slot, isSub){
   const fr = Math.round(p.fresh * 100);
-  const label = isSub ? p.pos() : V.SLOT_POS[slot];
-  const off = !isSub && p.role !== (V.SPECS.find(s => s[0] === slot) || [])[1] && slot !== "GK";
+  const label = isSub ? posLbl(p) : V.SLOT_POS[slot];
+  const fp = isSub ? 100 : famPct(p, slot);
   return `<div class="p drag" data-slot="${slot}">
     <div class="pos ${isSub ? "sub" : ""}">${label}</div>
-    <div class="pn"><b>${p.name}</b><i>${p.age} р · ${V.ROLE_UA[p.role]}${off ? " · не своя позиція" : ""} · ${stars(p)}${lastCareer(p) ? ' · <span class="ctw">останній сезон кар\'єри</span>' : lastYear(p) ? ' · <span class="ctw">останній сезон контракту</span>' : ""}</i></div>
+    <div class="pn"><b>${p.name}</b><i>${p.age} р · ${V.ROLE_UA[p.role]}${fp < 100 ? ` · позиція ${fp} %` : ""} · ${stars(p)}${lastCareer(p) ? ' · <span class="ctw">останній сезон кар\'єри</span>' : lastYear(p) ? ' · <span class="ctw">останній сезон контракту</span>' : ""}</i></div>
     <div class="pv"><b>${Math.round(p.power())}</b><div class="frbar"><i style="width:${fr}%"></i></div></div></div>`;
 }
 /* Розташування на полі: атака вправо, ворота зліва; координати в % ширини/висоти. */
@@ -319,20 +331,26 @@ const PITCH_LINES = `<svg class="ln" viewBox="0 0 105 68" preserveAspectRatio="n
   <rect x="98.5" y="26" width="5" height="16"/></svg>`;
 /* кружечок гравця: на полі (з позицією слота) або на лаві (з його позицією); під ним — прізвище, вік і зірки */
 function token(p, slot, onPitch){
-  const off = onPitch && slot !== "GK" && p.role !== (V.SPECS.find(s => s[0] === slot) || [])[1];
+  const fp = onPitch ? famPct(p, slot) : 100, off = fp < 100;
   const sur = p.name.split(" ").slice(-1)[0];
   const pos = onPitch ? `left:${PITCH_XY[slot][0]}%;top:${PITCH_XY[slot][1]}%` : "";
   const warn = lastCareer(p) ? "кінець кар'єри" : lastYear(p) ? "кінець контракту" : "";
-  return `<button class="tk drag ${onPitch ? "" : "bt"} ${off ? "off" : ""} ${warn ? "ctl" : ""}" data-slot="${slot}"
-      style="${pos}" title="${p.name}${warn ? " · " + warn : ""}">
-    <span class="c">${p.face ? `<img src="${p.face}" alt="">` : (onPitch ? V.SLOT_POS[slot] : p.pos())}<b>${Math.round(p.power())}</b></span>
-    <i>${sur}</i><em>${p.age} · <s>${"★".repeat(p.stars())}</s></em></button>`;
+  const pw = Math.round(onPitch ? p.fitIn(slot) : p.power());
+  const hurt = p.out > 0 || p.ban > 0, fr = Math.round(p.fresh * 100);
+  const state = p.out > 0 ? `<span class="hu">травма ${p.out} д</span>` : p.ban > 0 ? `<span class="hu">диск.</span>` : off ? `<span class="fp">${fp} %</span>` : `${p.age} · <s>${"★".repeat(p.stars())}</s>`;
+  return `<button class="tk drag ${onPitch ? "" : "bt"} ${off ? "off" : ""} ${hurt ? "hurt" : ""} ${warn ? "ctl" : ""}" data-slot="${slot}"
+      style="${pos}" title="${p.name} · ${posLbl(p)} · свіжість ${fr} %${p.out > 0 ? " · " + p.inj + ", ще " + p.out + " " + dayW(p.out) : ""}${off ? ` · на цьому місці ${fp} %` : ""}${warn ? " · " + warn : ""}">
+    <span class="c">${p.face ? `<img src="${p.face}" alt="">` : (onPitch ? V.SLOT_POS[slot] : posLbl(p))}<b>${pw}</b><span class="fbar ${fr < 50 ? "vlo" : fr < 75 ? "lo" : ""}"><i style="width:${fr}%"></i></span><span class="md" style="background:${moodOf(p)[2]}"></span></span>
+    <i>${sur}</i><em>${state}</em></button>`;
 }
 const pitchToken = (p, slot) => token(p, slot, true);
 /* склад: поле + лава кружечками; однаковий у «Команді» й у підготовці до матчу */
 function renderLineup(pitchEl, benchEl){
   pitchEl.innerHTML = `${PITCH_LINES}<div class="fm">4-3-3</div>` + V.SLOTS.map(s => pitchToken(s === "GK" ? ME.gk : ME.xi[s], s)).join("");
   benchEl.innerHTML = ME.bench.map((p, i) => token(p, "B" + i, false)).join("");
+  $$(".lustat").forEach(el => el.textContent = lineupMine()
+    ? "склад ваш — автовибір його не чіпає (лише травмованих замінить)"
+    : "перед матчем найкращий склад поставить автовибір");
   [...pitchEl.querySelectorAll(".tk"), ...benchEl.querySelectorAll(".tk")].forEach(el => {
     el.onclick = () => { if (DRAG.suppress){ DRAG.suppress = false; return } openPlayer(el.dataset.slot) };
   });
@@ -373,6 +391,7 @@ function renderTrain(){
    Щоденне тренування — головне джерело росту, база визначає його силу.
    Матч додає трохи тим, хто грав. Ніхто не росте вище своєї лінії віку.
    ======================================================================= */
+const matchBoost = p => ageF(p) < 20 ? 3 : 1;      // молоді ростуть від матчів утричі швидше
 const trainedToday = () => S.trained === `${S.season}-${S.round}`;
 function squadAll(){ return [ME.gk, ...Object.values(ME.xi), ...ME.bench] }
 function trainToday(quiet){
@@ -380,12 +399,12 @@ function trainToday(quiet){
   const k = V.kBase(S.buildings.training);
   const gains = [];
   squadAll().forEach(p => {
-    if (p.injured) return;                       // травмований не тренується
+    if (p.out > 0) return;                       // травмований не тренується
     const g = p.grow(p.slopeDay(ageF(p)) * k, ageF(p), S.focus);
     p._tg = (p._tg || 0) + g; gains.push([p, g]);
   });
   /* академія тренується разом із клубом, на тій самій базі */
-  S.academy.candidates.forEach(c => { c.p.grow(c.p.slopeDay(ageF(c.p)) * k, ageF(c.p), S.focus) });
+  S.academy.candidates.forEach(c => { c.p.grow(c.p.slopeDay(ageF(c.p)) * k, ageF(c.p), S.focus); c.p.rd = Math.min(60, (c.p.rd || 0) + 1) });
   S.trained = `${S.season}-${S.round}`;
   if (quiet) return;
   const total = gains.reduce((s, [, g]) => s + g, 0);
@@ -407,12 +426,138 @@ function trainToday(quiet){
 const getP = s => s === "GK" ? ME.gk : s[0] === "B" ? ME.bench[+s.slice(1)] : ME.xi[s];
 function setP(s, p){ if (s === "GK") ME.gk = p; else if (s[0] === "B") ME.bench[+s.slice(1)] = p; else ME.xi[s] = p }
 /* воротар стоїть лише у воротах або на лаві, польовий — будь-де, крім воріт */
-const slotOK = (slot, p) => slot === "GK" ? p.gk : slot[0] === "B" ? true : !p.gk;
+const slotOK = (slot, p) => slot === "GK" ? p.gk && canPlay(p) : slot[0] === "B" ? true : !p.gk && canPlay(p);
 function swap(a, b){
   const pa = getP(a), pb = getP(b);
   if (!slotOK(a, pb) || !slotOK(b, pa)) return false;
   setP(a, pb); setP(b, pa); return true;
 }
+
+/* =======================================================================
+   АВТОВИБІР СКЛАДУ (рішення 29.09, ОСНОВА 13–14)
+   Перед кожним матчем гра ставить найкращих: свої позиції, сильніші й свіжіші, без травмованих.
+   Якщо менеджер сам поставив чи підтвердив склад за останні 2 дні — склад не чіпаємо, лише
+   травмованого міняємо найкращим з лави на те саме місце й пишемо про це в новинах.
+   ======================================================================= */
+/* =======================================================================
+   РОЛІ Й МОРАЛЬ (рішення 29.09, прогін morale.js)
+   Підписуючи, обіцяєш роль. Гравець сам вважає себе кимось — за місцем за силою у твоєму складі.
+   Та сама роль — звичайна з.п.; на сходинку нижче +25 %; на дві й більше — відмова; на сходинку вище −10 %.
+   Мораль 0–100 (старт 70): зіграв +1; не зіграв — Зірка −4, Основа −3, Ротація −1,5, Запас −0,5; перемога +0,5, поразка −0,5.
+   Нижче 40 — не продовжує контракт; нижче 25 — просить продати. У матчі мораль основи дає до ±3 %.
+   ======================================================================= */
+const ROLE_T = {
+  young: { name: "Молодий", tier: 1, need: 0,   miss: 0,   promise: "без обіцянки" },
+  bench: { name: "Запас",   tier: 1, need: .10, miss: .5,  promise: "гратиме ≥ 10 % матчів" },
+  rot:   { name: "Ротація", tier: 2, need: .35, miss: 1.5, promise: "гратиме ≥ 35 % матчів" },
+  main:  { name: "Основа",  tier: 3, need: .60, miss: 3,   promise: "гратиме ≥ 60 % матчів" },
+  star:  { name: "Зірка",   tier: 4, need: .80, miss: 4,   promise: "гратиме ≥ 80 % матчів" },
+};
+const ROLE_LIMIT = { star: 2, main: 10, rot: 6 };            // місць у складі: Зірок до 2, Зірка+Основа до 10, Ротація до 6
+function selfRole(p){
+  if (p.age < 20 && !p.gk) return "young";
+  const same = squadAll().filter(q => q !== p && !!q.gk === !!p.gk && q.power() > p.power());
+  const r = same.length + 1;
+  if (p.gk) return r === 1 ? "main" : "bench";
+  return r <= 2 ? "star" : r <= 10 ? "main" : r <= 15 ? "rot" : "bench";
+}
+/* множник з.п. за обіцяну роль; null — відмовиться */
+function roleMult(p, chosen){
+  if (chosen === "young") return p.age < 20 ? .9 : null;
+  const d = ROLE_T[chosen].tier - ROLE_T[selfRole(p)].tier;
+  return d === 0 ? 1 : d === -1 ? 1.25 : d <= -2 ? null : .9;
+}
+const roleCount = (id, except) => squadAll().filter(q => q !== except && q.rl === id).length;
+function roleFull(p, id){
+  if (id === "star") return roleCount("star", p) >= ROLE_LIMIT.star;
+  if (id === "main") return roleCount("star", p) + roleCount("main", p) >= ROLE_LIMIT.main;
+  if (id === "rot") return roleCount("rot", p) >= ROLE_LIMIT.rot;
+  return false;
+}
+function ensureRoles(){
+  squadAll().forEach(p => {
+    if (p.mr == null) p.mr = 70;
+    if (!p.rl) p.rl = selfRole(p);
+    if (p.gp == null){ p.gp = 0; p.gt = 0 }
+  });
+}
+const moodOf = p => (p.mr ?? 70) >= 60 ? ["🙂", "задоволений", "var(--live)"] : (p.mr ?? 70) >= 40 ? ["😐", "терпить", "var(--gold)"] : ["🙁", "ображений", "var(--bad)"];
+/* мораль після матчу: зіграв — +1; не зіграв — за роллю; результат команди ±0,5 */
+function moraleAfterMatch(diff){
+  const played = M.played || new Set();
+  squadAll().forEach(p => {
+    if (p.mr == null) p.mr = 70;
+    const r = ROLE_T[p.rl || "main"];
+    if (played.has(p)){ p.mr += 1; p.gp = (p.gp || 0) + 1; if (p.gp % 6 === 0 && (p.abl || []).length) applyCard(p, "ab", 1) }
+    else if (!((p.out > 0) || (p.ban > 0))) p.mr -= r.miss;
+    if (!(p.out > 0 && !played.has(p)) && !(p.ban > 0 && !played.has(p))) p.gt = (p.gt || 0) + 1;
+    p.mr += diff > 0 ? .5 : diff < 0 ? -.5 : 0;
+    p.mr = Math.max(0, Math.min(100, p.mr));
+    if (p.mr < 25 && !p.wo){ p.wo = true; addNews("cap", `${p.name} просить продати: мало грає (мораль ${Math.round(p.mr)}). Можеш відмовити — але тоді мораль лишиться низькою.`) }
+    else if (p.mr >= 35 && p.wo) p.wo = false;
+    if (p.mr < 40 && !p.warned && p.ct != null && p.ct <= S.season){ p.warned = true; addNews("cap", `${p.name} не хоче продовжувати контракт: мало грає (мораль ${Math.round(p.mr)}).`) }
+  });
+}
+function setMorale(){
+  const xi = ME.onPitch();
+  ME.morale = xi.reduce((a, p) => a + ((p.mr ?? 70) - 70) / 30 * .03, 0) / xi.length;
+}
+const dayNo = () => S.season * 100 + S.round;
+const canPlay = p => p && !(p.out > 0) && !(p.ban > 0);
+const fitNow = (p, slot) => p.fitIn(slot) * (.7 + .3 * p.fresh);
+/* борг за обіцянкою: скільки матчів не догравав проти обіцяного цього сезону; 3 очка за матч боргу, не більше 4 матчів */
+const promiseDebt = p => Math.min(4, Math.max(0, (ROLE_T[p.rl || "main"].need) * ((p.gt || 0) + 1) - (p.gp || 0)));
+const fitPick = (p, slot) => fitNow(p, slot) + 3 * promiseDebt(p);
+function markLineup(){ S.lineupAt = dayNo() }
+const lineupMine = () => S.lineupAt != null && dayNo() >= S.lineupAt && dayNo() - S.lineupAt <= 2;
+/* найкращий склад: спершу жадібно найкращі пари «гравець — місце», далі обміни, доки стає краще */
+function bestLineup(){
+  const all = squadAll(), fs = V.SLOTS.slice(1), ok = all.filter(canPlay);
+  const gk = ok.filter(p => p.gk).sort((a, b) => fitPick(b, "GK") - fitPick(a, "GK"))[0] || ME.gk;
+  const field = ok.filter(p => !p.gk), xi = {}, used = new Set();
+  const pairs = []; field.forEach(p => fs.forEach(s => pairs.push([fitPick(p, s), p, s])));
+  pairs.sort((a, b) => b[0] - a[0]);
+  for (const [, p, s] of pairs){ if (xi[s] || used.has(p)) continue; xi[s] = p; used.add(p) }
+  for (let better = true, guard = 0; better && guard < 60; guard++){
+    better = false;
+    for (const a of fs) for (const b of fs){
+      if (a >= b || !xi[a] || !xi[b]) continue;
+      if (fitPick(xi[a], b) + fitPick(xi[b], a) > fitPick(xi[a], a) + fitPick(xi[b], b) + 1e-9){ [xi[a], xi[b]] = [xi[b], xi[a]]; better = true }
+    }
+    for (const s of fs) for (const q of field){
+      if (used.has(q) || !xi[s]) continue;
+      if (fitPick(q, s) > fitPick(xi[s], s) + 1e-9){ used.delete(xi[s]); used.add(q); xi[s] = q; better = true }
+    }
+  }
+  /* здорових польових не вистачило — на порожнє місце хоч когось */
+  fs.forEach(s => { if (!xi[s]){ const q = all.find(p => !p.gk && !used.has(p)); if (q){ xi[s] = q; used.add(q) } } });
+  const was = [ME.gk, ...fs.map(s => ME.xi[s])], now = [gk, ...fs.map(s => xi[s])];
+  ME.gk = gk; fs.forEach(s => ME.xi[s] = xi[s]);
+  const inXI = new Set(now);
+  ME.bench = all.filter(p => !inXI.has(p));
+  return now.some((p, i) => p !== was[i]);
+}
+/* перед матчем */
+function autoLineup(){
+  if (lineupMine()){
+    const ch = [];
+    V.SLOTS.forEach(s => {
+      const p = getP(s); if (canPlay(p)) return;
+      const b = ME.bench.map((q, i) => [q, i]).filter(([q]) => canPlay(q) && slotOK(s, q))
+        .sort((x, y) => fitNow(y[0], s) - fitNow(x[0], s))[0];
+      if (b && swap(s, "B" + b[1])) ch.push(`${b[0].name} замість ${p.name}`);
+    });
+    if (ch.length) addNews("eye", `Автовибір: у вашому складі травмовані — ${ch.join(", ")}. Решту складу лишили, як ви поставили.`);
+  } else if (bestLineup())
+    addNews("eye", "Автовибір поставив найкращий склад на матч: свої позиції, найсильніші, без травмованих. Щоб склад лишався вашим — змініть його або натисніть «Підтвердити склад».");
+}
+/* кнопки «Найкращий склад» і «Підтвердити склад» — у «Команді» й у підготовці до матчу */
+document.addEventListener("click", e => {
+  const b = e.target.closest("[data-lu]"); if (!b || M.live) return;
+  if (b.dataset.lu === "best"){ bestLineup(); toast("Поставили найкращий склад") }
+  else toast("Склад підтверджено — 2 дні автовибір його не чіпатиме");
+  markLineup(); save(); renderTeamIfOpen();
+});
 
 /* =======================================================================
    ПЕРЕТЯГУВАННЯ У СКЛАДІ
@@ -453,8 +598,8 @@ function dragEnd(){
   if (was){
     DRAG.suppress = true; setTimeout(() => { DRAG.suppress = false }, 350);
     if (DRAG.over){
-      if (swap(DRAG.slot, DRAG.over.dataset.slot)) save();
-      else toast("Воротар грає лише у воротах");
+      if (swap(DRAG.slot, DRAG.over.dataset.slot)){ markLineup(); save() }
+      else toast("Так поставити не можна: воротар грає лише у воротах, а травмований чи дискваліфікований — не грає");
     }
   }
   /* після звичайного тапу склад не перемальовуємо — інакше зник би елемент, по якому зараз прийде «клік» */
@@ -517,14 +662,14 @@ function radarSVG(p){
   return `<svg class="radar" viewBox="-18 -2 222 190">${web}${axes}
     <polygon class="val" points="${vals}"/>${labels}</svg>`;
 }
-const peakTxt = pk => pk % 1 ? `${Math.floor(pk)}–${Math.ceil(pk)} років` : `${pk} років`;
+const peakTxt = (a, b) => `${Math.round(a)}–${Math.round(b)} років`;
 /* Що каже картка про ріст — простими словами, з тими самими числами, що рахує гра. */
 function growthText(p){
   const a = ageF(p), line = p.line(a), pw = p.power();
-  const lim = `Межа — <b style="color:var(--gold)">${Math.round(p.pot)}</b>: може дорости до рівня Д${V.divOf(p.pot)}. Пік — у ${peakTxt(p.pk)}.`;
+  const lim = `Межа — <b style="color:var(--gold)">${Math.round(p.pot)}</b>: може дорости до рівня Д${V.divOf(p.pot)}. Пік — у ${peakTxt(p.pk, p.pk1)}.`;
   let now;
-  if (a >= p.pk + 4) now = "Пік позаду: більше не росте, повільно слабшають швидкість, сила й витривалість.";
-  else if (a >= p.pk + 1) now = "Пік позаду: більше не росте, але поки й не слабшає.";
+  if (a >= p.pk1 + 2) now = "Пік позаду: більше не росте, слабшають швидкість і сила, потім витривалість; техніка й пас тримаються довше.";
+  else if (a >= p.pk1) now = "Пік позаду: більше не росте, але поки майже не слабшає.";
   else if (line - pw < 0.3) now = `Зараз він на своїй лінії віку (${f1(line)}) — росте рівно стільки, скільки дозволяє вік.`;
   else now = `Для свого віку він міг би мати ${f1(line)} — до цієї лінії ще ${f1(line - pw)}, їх набирають тренуваннями.`;
   const season = p.ss != null ? ` За цей сезон: <b style="color:var(--live)">${sgn(pw - p.ss)}</b>.` : "";
@@ -537,6 +682,50 @@ function contractText(p){
   const left = p.ct - S.season;
   const when = left <= 0 ? "закінчується наприкінці цього сезону — продовж, інакше гравець піде" : left === 1 ? "ще цей і наступний сезон" : `ще ${left + 1} сезони`;
   return `Контракт до кінця сезону ${p.ct} (${when}). Зарплата ${fmt(V.wageOf(p))} за сезон.`;
+}
+/* ---- аптечки (рішення 29.09): зелена +15 % свіжості одному гравцю, до 4 на день на команду; червона −1 день травми ---- */
+const MED_PRICE = { g: 6, r: 10 };            // золото за штуку (200 золота ≈ 5 €)
+function kitsToday(){
+  if (S.kits.day !== dayNo()) S.kits = { ...S.kits, day: dayNo(), gUsed: 0, rUsed: [] };
+  return S.kits;
+}
+function useKit(kind, slot){
+  const p = getP(slot), k = kitsToday();
+  if (M.live) return toast("Під час матчу аптечки не діють — до свистка чи після");
+  if (kind === "g"){
+    if (p.fresh >= .999) return toast(`${p.name} і так свіжий`);
+    if (k.gUsed >= GREEN_DAY) return toast(`Не більше ${GREEN_DAY} зелених на день — решту завтра`);
+  } else {
+    if (!(p.out > 0)) return toast(`${p.name} не травмований`);
+    if (k.rUsed.includes(p.name)) return toast("Одному гравцю — одна червона на день");
+  }
+  if (k[kind] > 0) k[kind]--;
+  else if (S.gold >= MED_PRICE[kind]) S.gold -= MED_PRICE[kind];
+  else return toast(`Аптечок немає, а золота бракує (${MED_PRICE[kind]})`);
+  if (kind === "g"){ p.fresh = Math.min(1, p.fresh + GREEN); k.gUsed++ }
+  else { k.rUsed.push(p.name); p.out--; if (p.out === 0){ p.inj = null; addNews("inj", `${p.name} одужав завдяки аптечці.`) } }
+  renderTop(); save(); renderTeamIfOpen(); openPlayer(slot);
+}
+window.useKit = useKit;
+function abilBlock(p){
+  const n = (p.abl || []).length; if (!n) return "";
+  const rows = p.abl.map((id, k) => k < abOpen(p)
+    ? `<div class="ab"><b>${V.ABIL[id].name}</b><i>рівень ${V.abLv(p, id)} з 5 — ${V.ABIL[id].hint}</i></div>`
+    : `<div class="ab lock"><b>? закрита</b><i>відкриється, коли набереш очки здібностей (академія: картка «Здібність»)</i></div>`).join("");
+  return `<div class="note"><h3>Здібності · ${p.stars()} ★ дають ${n}</h3>${rows}
+    <p style="margin-top:6px;font-size:11px">Очки: ${p.abp || 0} (рівень = 10 очок). Дорослий отримує 1 очко за 6 зіграних матчів.</p></div>`;
+}
+function kitBar(slot, p){
+  const k = kitsToday(), cap = kitCap();
+  const lbl = (kind, txt) => k[kind] > 0 ? `${txt} · є ${k[kind]}` : `Купити й використати · ${MED_PRICE[kind]} золота`;
+  return `<div class="note"><h3>Стан гравця</h3>
+    <p>Роль: <b>${ROLE_T[p.rl || "main"].name}</b> (${ROLE_T[p.rl || "main"].promise}) · зіграв цього сезону ${p.gp || 0} з ${p.gt || 0}. Мораль <b style="color:${moodOf(p)[2]}">${Math.round(p.mr ?? 70)} ${moodOf(p)[0]} ${moodOf(p)[1]}</b>${p.wo ? ' · <span style="color:var(--bad)">просить продати</span>' : ""}.</p>
+    <p>Свіжість <b>${Math.round(p.fresh * 100)} %</b>${p.out > 0 ? ` · <span style="color:var(--bad)">${p.inj}, ще ${p.out} ${dayW(p.out)}</span>` : ""}${p.ban > 0 ? ` · дискваліфікація, пропустить матч` : ""}.
+    Аптечок: зелених ${k.g} з ${cap.g}, червоних ${k.r} з ${cap.r} · зелених сьогодні ${k.gUsed} з ${GREEN_DAY}.</p>
+    <div class="kits">
+      <button class="btn sm ${p.fresh >= .999 ? "ghost" : ""}" onclick="useKit('g','${slot}')">Зелена +15 % · ${lbl("g", "використати")}</button>
+      ${p.out > 0 ? `<button class="btn sm" onclick="useKit('r','${slot}')">Червона −1 день · ${lbl("r", "використати")}</button>` : ""}
+    </div></div>`;
 }
 function openPlayer(slot){
   const p = getP(slot);
@@ -554,6 +743,8 @@ function openPlayer(slot){
     <div class="sec">Характеристики</div>
     <div class="attrs">${V.ATTR.map((n, i) => `<div class="at"><span>${n}</span>
       <div class="b"><i style="width:${p.attrs[i]}%"></i></div><u>${Math.round(p.attrs[i])}</u></div>`).join("")}</div>
+    ${abilBlock(p)}
+    ${kitBar(slot, p)}
     <div class="note"><h3>${V.ROLE_UA[p.role]}</h3><p>${growthText(p)}</p>
       <p style="margin-top:6px">${contractText(p)} Оціночна вартість ${fmt(V.valueOf(p))}.</p>
       ${p.ct != null && p.ct <= S.season && !lastCareer(p) ? `<button class="btn sm" id="renewBtn" style="margin-top:8px">Продовжити контракт</button>` : ""}</div>
@@ -618,7 +809,7 @@ function renderLeague(){
    місце — у кінці сезону. Зарплати й утримання — щотуру. Усе пишеться в
    підсумок сезону (S.fin), щоб у кінці було видно, куди пішли гроші.
    ======================================================================= */
-const FIN0 = () => ({ tickets: 0, sponsor: 0, merch: 0, match: 0, prize: 0, sales: 0, wages: 0, upkeep: 0, build: 0, buys: 0 });
+const FIN0 = () => ({ gold: 0, login: 0, tickets: 0, sponsor: 0, merch: 0, match: 0, prize: 0, sales: 0, wages: 0, upkeep: 0, build: 0, buys: 0 });
 const levelsSum = () => Object.values(S.buildings).reduce((a, b) => a + b, 0);
 function book(kind, amount){ S.money += amount; S.fin[kind] = (S.fin[kind] || 0) + Math.abs(amount) }
 /* очікуваний дохід за сезон при нинішніх будівлях і середньому місці */
@@ -633,13 +824,21 @@ function stadiumFill(){
   const lostMoney = Math.max(0, (V.tickets(d, Math.round(V.need(d) + 2)) - V.tickets(d, S.buildings.stadium)) / 15);
   return { cap, want, fill: Math.min(1, want / cap), lost: Math.max(0, want - cap), lostMoney };
 }
+/* підтримка трибун удома (рішення 29.09): скільки прийшло проти звичайного стадіону дивізіону, від ×0,5 до ×1,5 */
+function crowdNow(){
+  const d = S.division, came = Math.min(V.fans(d), V.seats(S.buildings.stadium)), norm = V.seats(Math.round(V.need(d)));
+  return Math.max(.5, Math.min(1.5, came / norm));
+}
 function stadiumLine(){
   if (M.hm !== ME) return "";
-  const f = stadiumFill();
-  return `<p style="font-size:11.5px;color:${f.lost ? "var(--warn)" : "var(--dim)"};margin:6px 0 0">Стадіон: ${fmt(f.cap)} місць, заповнений на ${Math.round(f.fill * 100)} %.${f.lost ? ` Ще ≈ ${fmt(f.lost)} вболівальників не потрапили — втрачено ≈ ${fmt(f.lostMoney)} за матч. Час думати про більший стадіон.` : ""}</p>`;
+  const f = stadiumFill(), c = crowdNow();
+  return `<p style="font-size:11.5px;color:${f.lost ? "var(--warn)" : "var(--dim)"};margin:6px 0 0">Стадіон: ${fmt(f.cap)} місць, заповнений на ${Math.round(f.fill * 100)} %. Підтримка трибун ×${c.toFixed(2).replace(".", ",")}${c > 1.05 ? " — більший стадіон дає більшу перевагу дому" : c < .95 ? " — стадіон замалий для дивізіону, дома допомагає менше" : ""}.${f.lost ? ` Ще ≈ ${fmt(f.lost)} вболівальників не потрапили — втрачено ≈ ${fmt(f.lostMoney)} за матч. Час думати про більший стадіон.` : ""}</p>`;
 }
 /* травма минає за тур із таким шансом — медцентр прискорює */
-const injuryHeal = lvl => .35 + .025 * Math.min(20, lvl);
+/* свіжість за день і аптечки (рішення 29.09, прогони fatigue.js і greens.js) */
+const FRESH_DAY = .20;
+const GREEN = .15, GREEN_DAY = 4;                     // зелена: +15 % одному гравцю, не більше 4 на день на команду
+const kitCap = () => ({ g: 10 + S.buildings.medical, r: 5 + Math.floor(S.buildings.medical / 2) });   // скільки вміщує медцентр
 
 /* =======================================================================
    ІНФРАСТРУКТУРА
@@ -648,7 +847,8 @@ const MIN_PER_HOUR = 60000;            // у прототипі година б�
 function canBuild(id){
   const lvl = S.buildings[id];
   if (S.queue.find(q => q.id === id)) return "вже будується";
-  if (S.queue.length >= 2) return "обидві черги зайняті";
+  if (lvl >= 20) return "максимальний рівень";
+  if (S.queue.length >= 2 + (S.q3 === S.season ? 1 : 0)) return S.q3 === S.season ? "усі черги зайняті" : "обидві черги зайняті";
   if (id !== "stadium" && lvl + 1 > S.buildings.stadium) return "не вище за стадіон";
   if (S.money < V.buildCost(lvl + 1)) return "бракує грошей";
   return null;
@@ -664,8 +864,8 @@ function buildingHint(id){
   if (id === "training") return `Гравці розкривають ≈ ${Math.round(Math.min(1, (V.kBase(lvl) + V.MATCH_K) / 1.1) * 100)} % таланту.`;
   if (id === "academy"){ const ch = starChances(lvl), s = ch.reduce((a, b) => a + b, 0);
     return `Слотів ${academySlots(lvl)}. Шанс на тризіркового й кращого — ${Math.round(ch.slice(2).reduce((a, b) => a + b, 0) / s * 100)} %.` }
-  if (id === "scouts") return `Звітів скаута за сезон: ${scoutReportsFor(lvl)}.`;
-  if (id === "medical") return `Травма минає за тур із шансом ${Math.round(injuryHeal(lvl) * 100)} %.`;
+  if (id === "scouts") return `Безкоштовних звітів скаута на день: ${scoutPerDay(lvl)} (лежать до 3 днів).`;
+  if (id === "medical") return `Травми коротші на ${3 * Math.min(20, lvl)} %. Аптечок уміщує: зелених ${10 + lvl}, червоних ${5 + Math.floor(lvl / 2)}.`;
   return "";
 }
 function renderInfra(){
@@ -685,16 +885,39 @@ function renderInfra(){
   $$("#bgrid button[data-b]").forEach(btn => btn.onclick = () => startBuild(btn.dataset.b));
   renderQueue();
 }
+/* золото: k = скільки золота коштує 1 % доходу сезону (рішення 29.09); ціни самі йдуть за розвитком клубу */
+const GOLD_K = 10;
+const goldFor = money => Math.max(1, Math.round(GOLD_K * money / (incomeEstimate() / 100)));
+const speedCost = q => {
+  const left = Math.max(0, q.endAt - Date.now()), total = V.buildHours(q.lvl) * MIN_PER_HOUR;
+  return Math.max(1, Math.round(.5 * goldFor(V.buildCost(q.lvl)) * Math.min(1, left / total)));
+};
+function speedUp(i){
+  const q = S.queue[i]; if (!q) return;
+  const left = q.endAt - Date.now(); if (left <= 1000) return;
+  const c = speedCost(q);
+  if (S.gold < c){ toast(`Бракує золота: прискорення коштує ${c}`); return }
+  S.gold -= c; q.endAt = Date.now() + left * .4;
+  addNews("build", `Будівництво прискорено на 60 % за ${c} золота`);
+  renderTop(); renderQueue(); save();
+}
+function buyThirdQueue(){
+  if (S.q3 === S.season) return;
+  if (S.gold < 100){ toast("Бракує золота: третя черга коштує 100 на сезон"); return }
+  S.gold -= 100; S.q3 = S.season; renderTop(); renderInfra(); save();
+}
+window.speedUp = speedUp; window.buyThirdQueue = buyThirdQueue;
 function renderQueue(){
   const box = $("#qlist"); if (!box) return;
-  if (!S.queue.length){ box.innerHTML = `<div class="qrow"><b>Черга порожня</b><span class="time">—</span></div>`; return }
-  box.innerHTML = S.queue.map(q => {
+  const third = S.q3 === S.season ? "" : `<div class="qrow"><b>Третя черга на цей сезон</b><span style="color:var(--dim)">будувати три будівлі водночас</span><button class="btn ghost sm" onclick="buyThirdQueue()">100 золота</button></div>`;
+  if (!S.queue.length){ box.innerHTML = `<div class="qrow"><b>Черга порожня</b><span class="time">—</span></div>` + third; return }
+  box.innerHTML = S.queue.map((q, qi) => {
     const b = BUILDINGS.find(x => x.id === q.id);
     const left = Math.max(0, q.endAt - Date.now());
     const mm = String(Math.floor(left / 60000)).padStart(2, "0");
     const ss = String(Math.floor(left % 60000 / 1000)).padStart(2, "0");
-    return `<div class="qrow"><b>${b.name}</b><span style="color:var(--dim)">рівень ${q.lvl}</span><span class="time">${mm}:${ss}</span></div>`;
-  }).join("");
+    return `<div class="qrow"><b>${b.name}</b><span style="color:var(--dim)">рівень ${q.lvl}</span><span class="time">${mm}:${ss}</span><button class="btn ghost sm" onclick="speedUp(${qi})" title="−60 % часу">Прискорити · ${speedCost(q)} золота</button></div>`;
+  }).join("") + third;
 }
 function startBuild(id){
   if (canBuild(id)) return;
@@ -729,30 +952,42 @@ setInterval(processQueue, 1000);
    другий — точну силу й межу. Звітів на сезон дає скаутський центр.
    kn: 0 — діапазон, 1 — зірки, 2 або немає — усе відомо.
    ======================================================================= */
-const scoutReportsFor = lvl => 2 + Math.floor((Math.min(20, lvl) - 1) / 2);
-function scoutLeft(){
-  if (!S.scout || S.scout.season !== S.season) S.scout = { season: S.season, left: scoutReportsFor(S.buildings.scouts) };
-  return S.scout.left;
+/* Звіти: щодня безкоштовно 1 + рівень/5 (рівень 1 — 1, 5 — 2, 10 — 3, 15 — 4, 20 — 5), лежать до 3 днів; старт — 10;
+   далі за золото (3). Реклама — коли з'явиться сервер. Два види: на зірки (kn |= 1) і на силу з межею (kn |= 2). */
+const scoutPerDay = lvl => 1 + Math.floor(Math.min(20, lvl) / 5);
+const SCOUT_GOLD = 3;
+function scoutLeft(){ if (!S.scout || S.scout.left == null) S.scout = { left: 10 }; return S.scout.left }
+function scoutTick(){
+  scoutLeft();
+  const per = scoutPerDay(S.buildings.scouts), cap = per * 3;
+  if (S.scout.left < cap) S.scout.left = Math.min(cap, S.scout.left + per);
 }
 function makeRange(p){
   const s = p.stars(), w = S.buildings.scouts >= 5 ? 1 : 2;
   let lo = s - V.ri(0, w), hi = lo + w;
   if (hi > 6){ hi = 6; lo = 6 - w } if (lo < 1){ lo = 1; hi = 1 + w }
-  p.sr = [lo, hi]; p.ap = Math.round((p.power() + V.rf(-3, 3)) / 5) * 5; p.kn = 0;
+  const pw = Math.round(p.power()), plo = pw - V.ri(1, 5);
+  p.sr = [lo, hi]; p.pr = [plo, plo + 6]; p.ap = Math.round((p.power() + V.rf(-3, 3)) / 5) * 5; p.kn = 0;
 }
-const known = p => p.kn == null || p.kn >= 2;
-function starsView(p){ return p.kn === 0 ? `<span class="rngst">${p.sr[0]}–${p.sr[1]} ★</span>` : stars(p) }
-const powShown = p => known(p) ? p.power() : p.ap;
-const powView = p => known(p) ? String(Math.round(p.power())) : `≈${p.ap}`;
-function scoutReport(p, after){
-  if (known(p)) return;
-  if (scoutLeft() <= 0){ toast("Звітів скаута на цей сезон не лишилось"); return }
-  S.scout.left--; p.kn = (p.kn || 0) + 1;
+const kStars = p => p.kn == null || (p.kn & 1) > 0;
+const kPow = p => p.kn == null || (p.kn & 2) > 0;
+const known = p => kStars(p) && kPow(p);
+function starsView(p){ return kStars(p) ? stars(p) : `<span class="rngst">${p.sr[0]}–${p.sr[1]} ★</span>` }
+const powShown = p => kPow(p) ? p.power() : (p.pr ? (p.pr[0] + p.pr[1]) / 2 : p.ap);
+const powView = p => kPow(p) ? String(Math.round(p.power())) : (p.pr ? `${p.pr[0]}–${p.pr[1]}` : `≈${p.ap}`);
+function scoutReport(p, type, after){
+  if (type === "s" ? kStars(p) : kPow(p)) return;
+  if (scoutLeft() > 0) S.scout.left--;
+  else if (S.gold >= SCOUT_GOLD) S.gold -= SCOUT_GOLD;
+  else { toast(`Безкоштовні звіти скінчились (завтра прийдуть нові), а золота бракує (${SCOUT_GOLD})`); return }
+  p.kn = (p.kn || 0) | (type === "s" ? 1 : 2);
   if (!S.scouted || S.scouted.season !== S.season) S.scouted = { season: S.season, map: {} };
   S.scouted.map[p.name] = p.kn;
-  addNews("eye", p.kn === 1 ? `Скаут: ${p.name} — ${p.stars()} ★` : `Скаут: ${p.name} — сила ${Math.round(p.power())}, межа ${Math.round(p.pot)}`);
-  save(); if (after) after();
+  addNews("eye", type === "s" ? `Скаут: ${p.name} — ${p.stars()} ★` : `Скаут: ${p.name} — сила ${Math.round(p.power())}, межа ${Math.round(p.pot)}`);
+  renderTop(); save(); if (after) after();
 }
+const scoutBtns = (p, attr) => (kStars(p) ? "" : `<button class="btn ghost sm" ${attr} data-st="s" ${scoutLeft() > 0 || S.gold >= SCOUT_GOLD ? "" : "disabled"}>★ Зірки</button>`)
+  + (kPow(p) ? "" : `<button class="btn ghost sm" ${attr} data-st="w" ${scoutLeft() > 0 || S.gold >= SCOUT_GOLD ? "" : "disabled"}>Сила й межа</button>`);
 
 /* =======================================================================
    АКАДЕМІЯ (ОСНОВА 5)
@@ -782,48 +1017,94 @@ function starChances(lvl){
   }
   return ACAD_ANCH[ACAD_ANCH.length - 1][1];
 }
+/* ---- готовність, картки дня, інтенсив (рішення 29.09, прогін academy-path.js) ----
+   Готовність 0–60: тренував — +1, не заходив — +2/3, картка +1…+3, «Інтенсив» за золото +10. В основу — з 60 і не раніше 17 років. */
+const isReadyC = c => (c.p.rd || 0) >= 60 && c.p.age >= 17;
+const CARD_T = { pw: "Сила", rd: "Готовність", ab: "Здібність" };
+const CARD_PRICE = 4, INTENSIVE = 20;       // золота: перекинути картки одразу всім, «Інтенсив» на вихованця
+function dealCards(p){
+  if (p.cd && p.cd.day === dayNo()) return;
+  const card = () => ({ t: V.pick(["pw", "rd", "ab"]), v: (x => x < .6 ? 1 : x < .9 ? 2 : 3)(V.R()) });
+  p.cd = { day: dayNo(), hand: [card(), card(), card(), card()], done: null };
+}
+function applyCard(p, t, v){
+  if (t === "pw") p.grow(p.slopeDay(ageF(p)) * V.kBase(S.buildings.training) * v * 1.5, ageF(p), S.focus);
+  else if (t === "rd") p.rd = Math.min(60, (p.rd || 0) + v);
+  else {
+    const before = abOpen(p); p.abp = (p.abp || 0) + v;
+    if (abOpen(p) > before) addNews("eye", `${p.name}: відкрилась нова здібність — ${V.ABIL[p.abl[abOpen(p) - 1]].name}`);
+  }
+}
+const abOpen = p => Math.min((p.abl || []).length, 1 + Math.floor((p.abp || 0) / 10));
+function pickCard(ci, k){
+  const c = S.academy.candidates[ci]; if (!c) return;
+  const p = c.p; dealCards(p);
+  if (p.cd.done) return;
+  const h = p.cd.hand[k]; applyCard(p, h.t, h.v); p.cd.done = h;
+  renderAcademyPage(); save();
+}
+function rerollCards(){
+  if (S.gold < CARD_PRICE){ toast(`Бракує золота (${CARD_PRICE})`); return }
+  S.gold -= CARD_PRICE;
+  S.academy.candidates.forEach(c => { if (!c.p.cd || !c.p.cd.done){ c.p.cd = null; dealCards(c.p) } });
+  renderTop(); renderAcademyPage(); save();
+}
+function intensive(ci, kind){
+  const c = S.academy.candidates[ci]; if (!c) return; const p = c.p;
+  if (!p.it || p.it.s !== S.season) p.it = { s: S.season, n: 0 };
+  if (p.it.n >= 2){ toast("«Інтенсив» — не більше двох разів за сезон на вихованця"); return }
+  if (S.gold < INTENSIVE){ toast(`Бракує золота (${INTENSIVE})`); return }
+  S.gold -= INTENSIVE; p.it.n++;
+  if (kind === "rd") p.rd = Math.min(60, (p.rd || 0) + 10); else applyCard(p, "ab", 10);
+  addNews("eye", `«Інтенсив» для ${p.name}: ${kind === "rd" ? "готовність +10" : "здібності +10 очок"}`);
+  renderTop(); renderAcademyPage(); save();
+}
+window.pickCard = pickCard; window.rerollCards = rerollCards; window.intensive = intensive;
 /* юнак: yearsLeft 2 — щойно прийшов (16 років), 0 — уже готовий (18) */
 function genYouth(yearsLeft){
+  const p = genYouth0(yearsLeft);
+  p.abp = 0; p.rd = yearsLeft <= 0 ? 60 : 0;     // вихованець стартує без прокачаних здібностей; готовність 0–60
+  return p;
+}
+function genYouth0(yearsLeft){
   const isGK = V.R() < 1 / 7;
   const role = isGK ? "gk" : V.pick(ACAD_ROLES);
   const st = V.wpick([1, 2, 3, 4, 5, 6], starChances(S.buildings.academy));
   const [lo, hi] = V.LIM_BAND[st - 1];
   const lim = V.rf(lo, hi), age = 18 - yearsLeft;
-  const pk = V.PEAK[V.ROLE_POS[role]] ?? 25.5;
-  return new V.P(V.uname(), role, V.lineAt(lim, pk, age) * V.rf(0.85, 1.0), isGK, age, 0.30, lim);
+  return new V.P(V.uname(), role, V.lineFor(lim, isGK ? "gk" : role, age) * V.rf(0.85, 1.0), isGK, age, 0.30, lim);
 }
 function newIntake(){
   S.academy.offers = Array.from({ length: V.ri(6, 8) }, () => { const p = genYouth(2); makeRange(p); return p });
 }
 function stockAcademyAtFounding(){
   /* один уже готовий — є кого підписати в перший сезон; решту слотів обираєш із набору */
-  S.academy.candidates = [{ p: genYouth(0), yearsLeft: 0 }];
+  S.academy.candidates = [{ p: genYouth(0) }];
   newIntake();
 }
-function ageAcademyOneSeason(){
-  S.academy.candidates.forEach(c => { c.yearsLeft = Math.max(0, c.yearsLeft - 1) });
-  newIntake();
-}
+function ageAcademyOneSeason(){ newIntake() }
 function enroll(i){
   if (S.academy.candidates.length >= academySlots()){ toast("Вільних слотів в академії немає"); return }
   const p = S.academy.offers.splice(i, 1)[0]; if (!p) return;
   p.kn = null;                                   // своїх вихованців знаєш повністю
-  S.academy.candidates.push({ p, yearsLeft: 2 });
+  p.rd = 0; p.abp = 0; p.cd = null;
+  S.academy.candidates.push({ p });
   addNews("eye", `${p.name} (${p.stars()} ★) узятий в академію.`);
   renderAcademyPage(); save();
 }
 function signCandidate(i){
   const c = S.academy.candidates[i];
-  if (!c || c.yearsLeft > 0) return;
-  contractSheet(c.p, { title: `Підписати з академії: ${c.p.name}`, onSign: (years, wage) => {
+  if (!c || !isReadyC(c)) return;
+  contractSheet(c.p, { title: `Підписати з академії: ${c.p.name}`, onSign: (years, wage, role) => {
     const k = S.academy.candidates.indexOf(c); if (k === -1) return;
-    signAcademy(c, years, wage);
+    signAcademy(c, years, wage, role);
     addNews("eye", `${c.p.name} з академії підписаний в основну команду: контракт на ${years} ${yrs(years)}, з.п. ${fmt(wage)}.`);
     renderAcademyPage(); if (page === "team") renderTeam(); save();
   } });
 }
-function signAcademy(c, years, wage){
+function signAcademy(c, years, wage, role){
   c.p.ss = c.p.power(); c.p.wg = wage; c.p.ct = S.season + years - 1; c.p.js = S.season;
+  c.p.rl = role || selfRole(c.p); c.p.mr = 70; c.p.gp = 0; c.p.gt = 0; c.p.wo = false; c.p.warned = false;
   ME.bench.push(c.p);
   S.academy.candidates.splice(S.academy.candidates.indexOf(c), 1);
 }
@@ -835,9 +1116,25 @@ function signAcademy(c, years, wage){
    продовження починається з наступного сезону.
    ======================================================================= */
 function contractSheet(p, o){
-  const base = o.baseWage ?? V.wageFor(p);
+  if (o.renew && (p.mr ?? 70) < 40){
+    $("#sheet").innerHTML = `<h2>${p.name} відмовляється</h2>
+      <div class="s">мораль ${Math.round(p.mr)} — ${moodOf(p)[0]} ${moodOf(p)[1]}</div>
+      <p style="font-size:13px;color:var(--muted);margin:0 0 12px">Він не хоче продовжувати контракт: мало грає, а обіцяли більше. Дай йому грати — мораль піднімається з кожним матчем, — і проси знову. Або продай його, поки контракт діє.</p>
+      <button class="btn ghost sm" onclick="closeSheet()">Закрити</button>`;
+    return openSheet();
+  }
+  const self = selfRole(p);
+  const role = o.role && ROLE_T[o.role] && roleMult(p, o.role) != null && !roleFull(p, o.role) ? o.role : (roleFull(p, self) ? "rot" : self);
+  o.role = role;
+  const rm = roleMult(p, role);
+  const base = (o.baseWage ?? V.wageFor(p)) * rm;
   const today = o.today || 0;
   const oldWage = o.renew ? V.wageOf(p) : 0;
+  const rolesUI = (p.age < 20 && !p.gk ? ["young", "bench", "rot", "main", "star"] : ["bench", "rot", "main", "star"]).map(id => {
+    const m = roleMult(p, id), full = roleFull(p, id);
+    const t = m == null ? "відмовиться" : full ? "місць немає" : m === 1 ? "звичайна з.п." : m > 1 ? `з.п. +${Math.round((m - 1) * 100)} %` : `з.п. −${Math.round((1 - m) * 100)} %`;
+    return `<button class="cterm ${id === role ? "on" : ""}" data-role="${id}" ${m == null || full ? "disabled" : ""}><b>${ROLE_T[id].name}</b><i>${ROLE_T[id].promise}</i><s>${t}</s></button>`;
+  }).join("");
   const rows = [1, 2, 3, 4].map(y => {
     const w = Math.round(base * V.CONTRACT_K[y]);
     const why = y > maxYears(p) ? `ветерану — щонайбільше ${maxYears(p)} ${yrs(maxYears(p))}` : S.money < today ? "бракує грошей" : ME.wageBill() - oldWage + w > wageCapNow() ? "понад стелю з.п." : "";
@@ -850,20 +1147,24 @@ function contractSheet(p, o){
     ${o.note || ""}
     ${today ? `<div class="attrs" style="margin-top:6px;grid-template-columns:1fr">${o.costLines || ""}
       <div class="at"><span><b style="color:var(--gold-hi)">Сьогодні платиш</b></span><u style="width:auto;color:var(--gold-hi)">${fmt(today)}</u></div></div>` : ""}
-    <div class="lab" style="margin-top:6px">Строк контракту · коротший дорожчий за рік</div>
+    <div class="lab" style="margin-top:6px">Роль у команді · він вважає себе: ${ROLE_T[self].name}</div>
+    <div class="cterms">${rolesUI}</div>
+    <p style="font-size:11px;color:var(--dim);margin:6px 0 0">Якщо не даси грати стільки, скільки обіцяв, мораль падає (Зірка — найшвидше). Нижче 40 — не продовжить контракт, нижче 25 — попросить продати.</p>
+    <div class="lab" style="margin-top:10px">Строк контракту · коротший дорожчий за рік</div>
     <div class="cterms">${rows.map(r => `<button class="cterm" data-y="${r.y}" ${r.why ? "disabled" : ""}>
         <b>${r.y} ${yrs(r.y)}</b><i>до кінця сезону ${until(r.y)}</i>
         <u>${fmt(r.w)} / сезон</u><s>${r.why || "разом " + fmt(r.w * r.y)}</s></button>`).join("")}</div>
     <p style="font-size:11.5px;color:var(--dim);margin:10px 0 0">Вільно в стелі зарплат: ${fmt(Math.max(0, wageCapNow() - ME.wageBill() + oldWage))} · бюджет ${fmt(S.money)}</p>
     <button class="btn ghost sm" style="margin-top:12px" onclick="closeSheet()">Скасувати</button>`;
-  $$("#sheet .cterm").forEach(b => b.onclick = () => {
+  $$("#sheet [data-role]").forEach(b => b.onclick = () => { o.role = b.dataset.role; contractSheet(p, o) });
+  $$("#sheet .cterm[data-y]").forEach(b => b.onclick = () => {
     const r = rows.find(x => x.y === +b.dataset.y); if (!r || r.why) return;
     closeSheet();
     if (o.renew){
-      p.wg = r.w; p.ct = until(r.y); p.wagePrem = undefined;
+      p.wg = r.w; p.ct = until(r.y); p.wagePrem = undefined; p.rl = role; p.gp = 0; p.gt = 0; p.warned = false;
       addNews("cap", `${p.name}: контракт продовжено до кінця сезону ${p.ct}, з.п. ${fmt(r.w)}`);
       save(); if (page === "team") renderTeam();
-    } else o.onSign(r.y, r.w);
+    } else o.onSign(r.y, r.w, role);
   });
   openSheet();
 }
@@ -878,16 +1179,26 @@ function renderAcademy(){
   const box = $("#acadGrid"); if (!box) return;
   const ch = starChances(S.buildings.academy), sum = ch.reduce((a, b) => a + b, 0);
   const good = Math.round(ch.slice(2).reduce((a, b) => a + b, 0) / sum * 100);
-  $("#acadSub").textContent = `${S.academy.candidates.length} / ${academySlots()} слотів · академія рівня ${S.buildings.academy}: шанс на тризіркового й кращого — ${good} %`;
+  $("#acadSub").textContent = `Щодня 4 картки на вихованця — обери одну (не вибереш — день пропаде). Не влаштовують — «Нові картки» за ${CARD_PRICE} золота. · ${S.academy.candidates.length} / ${academySlots()} слотів · академія рівня ${S.buildings.academy}: шанс на тризіркового й кращого — ${good} %`;
   box.innerHTML = S.academy.candidates.length ? S.academy.candidates.map((c, i) => {
-    const ready = c.yearsLeft <= 0;
+    const p = c.p, ready = isReadyC(c), rd = Math.min(60, Math.round(p.rd || 0));
+    dealCards(p);
+    const ab = (p.abl || []).map((id, k) => k < abOpen(p) ? `<b>${V.ABIL[id].name} ${V.abLv(p, id)}</b>` : `<u title="відкриється карткою «Здібність»">? закрита</u>`).join(" · ");
+    const cards = p.cd.done
+      ? `<p class="cdone">Сьогодні вибрано: ${CARD_T[p.cd.done.t]} +${p.cd.done.v}. Нові картки — завтра.</p>`
+      : `<div class="cards">${p.cd.hand.map((h, k) => `<button class="card c-${h.t}" onclick="pickCard(${i},${k})"><i>${CARD_T[h.t]}</i><b>+${h.v}</b></button>`).join("")}</div>`;
     return `<div class="acad-card">
-      <div class="h"><div class="pos">${c.p.pos()}</div><b>${c.p.name}</b></div>
-      <p>${c.p.age} ${yrs(c.p.age)} · ${V.ROLE_UA[c.p.role]} · сила ${f1(c.p.power())} · межа ${Math.round(c.p.pot)} (рівень Д${V.divOf(c.p.pot)}) · ${stars(c.p)}</p>
-      <div class="status ${ready ? "ready" : "wait"}">${ready ? "готовий підписати" : `ще ${c.yearsLeft} ${c.yearsLeft === 1 ? "сезон" : "сезони"} в академії`}</div>
+      <div class="h"><div class="pos">${p.pos()}</div><b>${p.name}</b></div>
+      <p>${p.age} ${yrs(p.age)} · ${V.ROLE_UA[p.role]} · сила ${f1(p.power())} · межа ${Math.round(p.pot)} (рівень Д${V.divOf(p.pot)}) · ${stars(p)}</p>
+      <div class="rdrow"><span>Готовність ${rd} з 60</span><div class="rdbar"><i style="width:${rd / 60 * 100}%"></i></div></div>
+      <p class="abl">Здібності: ${ab || "—"}</p>
+      <div class="status ${ready ? "ready" : "wait"}">${ready ? "готовий підписати" : rd >= 60 ? "готовий, але ще не 17 років" : "у академії: тренуй щодня — +1 до готовності"}</div>
+      ${cards}
       <div class="row">
         <button class="btn sm ${ready ? "" : "ghost"}" data-sign="${i}" ${ready ? "" : "disabled"}>Підписати</button>
         <button class="btn ghost sm" data-release="${i}">Відрахувати</button>
+        <button class="btn ghost sm" onclick="intensive(${i},'rd')" title="${INTENSIVE} золота">Інтенсив: готовність +10</button>
+        <button class="btn ghost sm" onclick="intensive(${i},'ab')" title="${INTENSIVE} золота">Інтенсив: здібності +10</button>
       </div>
     </div>`;
   }).join("") : `<div class="acad-empty">В академії поки нікого. Обери кандидатів із набору нижче.</div>`;
@@ -895,23 +1206,23 @@ function renderAcademy(){
   $$("#acadGrid [data-release]").forEach(b => b.onclick = () => releaseCandidate(+b.dataset.release));
   const free = academySlots() - S.academy.candidates.length, offers = S.academy.offers || [];
   $("#offerSub").textContent = offers.length
-    ? `${offers.length} кандидатів від скаута, 16 років. Вільних слотів: ${free}. Звітів скаута лишилось: ${scoutLeft()}. Решта піде, коли прийде новий набір.`
+    ? `${offers.length} кандидатів від скаута, 16 років. Вільних слотів: ${free}. Звітів скаута: ${scoutLeft()} (безкоштовні щодня, далі ${SCOUT_GOLD} золота). Решта піде, коли прийде новий набір.`
     : `Набір цього сезону розібрано. Новий прийде на початку наступного сезону.`;
   $("#acadOffers").innerHTML = offers.map((p, i) => `<div class="acad-card">
       <div class="h"><div class="pos">${p.pos()}</div><b>${p.name}</b></div>
-      <p>${p.age} ${yrs(p.age)} · ${V.ROLE_UA[p.role]} · сила ${powView(p)} · ${starsView(p)}${known(p) ? ` · межа ${Math.round(p.pot)}` : ""}</p>
+      <p>${p.age} ${yrs(p.age)} · ${V.ROLE_UA[p.role]} · сила ${powView(p)} · ${starsView(p)}${kPow(p) ? ` · межа ${Math.round(p.pot)}` : ""}</p>
       <div class="row">
         <button class="btn sm ${free > 0 ? "" : "ghost"}" data-enroll="${i}" ${free > 0 ? "" : "disabled"}>Взяти</button>
-        ${known(p) ? "" : `<button class="btn ghost sm" data-scout="${i}" ${scoutLeft() > 0 ? "" : "disabled"}>Звіт скаута</button>`}
+        ${scoutBtns(p, `data-scout="${i}"`)}
       </div>
     </div>`).join("");
   $$("#acadOffers [data-enroll]").forEach(b => b.onclick = () => enroll(+b.dataset.enroll));
-  $$("#acadOffers [data-scout]").forEach(b => b.onclick = () => scoutReport(offers[+b.dataset.scout], renderAcademyPage));
+  $$("#acadOffers [data-scout]").forEach(b => b.onclick = () => scoutReport(offers[+b.dataset.scout], b.dataset.st, renderAcademyPage));
 }
 function renderAcademyPage(){
   renderAcademy();
   $("#scoutLvl").textContent = S.buildings.scouts;
-  $("#scoutNote").textContent = `Скаутський центр дає ${scoutReportsFor(S.buildings.scouts)} звітів за сезон, лишилось ${scoutLeft()}. Перший звіт про гравця відкриває зірки, другий — точну силу й межу. Звіти діють і на кандидатів академії, і на гравців інших дивізіонів на ринку.${S.buildings.scouts >= 5 ? "" : " З 5-го рівня початковий діапазон зірок вужчий."}`;
+  $("#scoutNote").textContent = `Скаутський центр дає ${scoutPerDay(S.buildings.scouts)} безкоштовних звітів на день (лежать до 3 днів), зараз є ${scoutLeft()}; понад це — ${SCOUT_GOLD} золота. Два види звітів: на зірки й на силу з межею. Діють і на кандидатів академії, і на гравців інших дивізіонів на ринку.${S.buildings.scouts >= 5 ? "" : " З 5-го рівня початковий діапазон зірок вужчий."}`;
 }
 
 /* =======================================================================
@@ -976,7 +1287,7 @@ const capRoom = () => wageCapNow() - ME.wageBill();
 const posGroup = p => { const x = p.gk ? "GK" : (V.ROLE_POS[p.role] || "");
   return p.gk ? "gk" : ["ЦЗ","КЗ"].includes(x) ? "def" : ["ОП","ЦП","АП"].includes(x) ? "mid" : "att" };
 /* зірки, які ти бачиш: точні, якщо скаут уже відкрив, інакше — діапазон */
-const starsSeen = p => known(p) || p.kn === 1 ? [p.stars(), p.stars()] : p.sr;
+const starsSeen = p => kStars(p) ? [p.stars(), p.stars()] : p.sr;
 function marketListings(src){
   const out = src === "free" ? faRows() : [];
   if (src !== "free"){
@@ -1014,7 +1325,7 @@ function mcard(r, i){
     ${g.cls === "ok" ? "" : `<div class="mneed">${needText(p)}</div>`}
     ${lastCareer(p) ? `<div class="mneed ctw">останній сезон кар'єри — наприкінці сезону завершить</div>` : ""}
     <div class="mfoot"><div class="price"><b>${fmt(k.total)}</b><i>вартість ${fmt(k.value)} · з.п. ${fmt(k.wage)} / сезон</i></div>${btn}</div>
-    ${known(p) ? "" : `<b class="slink" data-scout="${i}">звіт скаута</b>`}
+    ${known(p) ? "" : `<div class="mscout">${scoutBtns(p, `data-scout="${i}"`)}</div>`}
   </div>`;
 }
 function renderMarket(){
@@ -1028,7 +1339,7 @@ function renderMarket(){
           ? "Вільних агентів зараз немає. Вони з'являються на початку сезону — це гравці, у яких скінчився контракт."
           : "За цими фільтрами нікого немає. Спробуй розширити діапазон сили чи зірок."}</div>`;
     $$("#marketBody [data-deal]").forEach(b => b.onclick = () => openDeal(rows[+b.dataset.deal]));
-    $$("#marketBody [data-scout]").forEach(b => b.onclick = () => scoutReport(rows[+b.dataset.scout].p, renderMarket));
+    $$("#marketBody [data-scout]").forEach(b => b.onclick = () => scoutReport(rows[+b.dataset.scout].p, b.dataset.st, renderMarket));
   } else {
     const mine = ME.bench;
     box.innerHTML = mine.length ? `<div class="mgrid">${mine.map((p, i) => `<div class="mcard">
@@ -1069,10 +1380,10 @@ function openDeal(row){
   contractSheet(row.p, {
     title: `${row.free ? "Підписати" : "Купити"}: ${row.p.name}`, baseWage: k.wage, today: k.total, note,
     costLines: line("Трансферна сума з комісією", k.price + k.comm) + line(row.free ? "Премія за підпис (вільний агент)" : "Премія за підпис", k.bonus),
-    onSign: (years, wage) => completeBuy(row, years, wage),
+    onSign: (years, wage, role) => completeBuy(row, years, wage, role),
   });
 }
-function completeBuy(row, years, wage){
+function completeBuy(row, years, wage, role){
   const k = dealOf(row);
   if (S.money < k.total){ toast("Бракує грошей"); return false }
   if (row.fa){ const i = S.fa.indexOf(row.fa); if (i === -1) return false; S.fa.splice(i, 1) }
@@ -1086,6 +1397,7 @@ function completeBuy(row, years, wage){
   }
   row.p.wg = wage; row.p.ct = S.season + years - 1; row.p.kn = null; row.p.ss = row.p.power(); row.p.wagePrem = undefined;
   row.p.paid = k.total; row.p.js = S.season;
+  row.p.rl = role || selfRole(row.p); row.p.mr = 70; row.p.gp = 0; row.p.gt = 0; row.p.wo = false; row.p.warned = false;
   ME.bench.push(row.p);
   book("buys", -k.total);
   addNews("cap", `${row.free ? "Підписано вільного агента" : "Куплено"} ${row.p.name} (Д${row.div}) за ${fmt(k.total)}: контракт на ${years} ${yrs(years)}, з.п. ${fmt(wage)}`);
@@ -1173,17 +1485,161 @@ function worldTeamSheet(t){
 }
 
 /* =======================================================================
+   НАГОРОДИ ЗА ВХІД (рішення 29.09, ПЛАН «Нагороди за вхід»)
+   Цикл 30 днів = сезон; серія згоряє при пропуску, рятують жетони незгоряння (10-й день і кожні 100).
+   Круглі дні (підряд): 50/150/250/350/450 — емблема; 100/200/300/400 — жетон + форма; 365 — форма + 100 золота;
+   500 — форма, емблема, жетон. Золото кожні 7 днів; гроші — частка доходу сезону; аптечки; звіти скаута; на 30-й день — здібність.
+   ======================================================================= */
+const todayStr = () => window.__today || new Date().toLocaleDateString("sv-SE");   // YYYY-MM-DD
+const daysBetween = (a, b) => Math.round((Date.parse(b) - Date.parse(a)) / 86400000);
+function rewardFor(streak){
+  const cyc = (streak - 1) % 30 + 1, R = { cyc, streak, money: 0, g: 0, r: 0, scouts: 0, gold: 0, tok: 0, ab: null, crest: 0, kit: 0 };
+  if (cyc <= 28){
+    const d = (cyc - 1) % 7 + 1, w = Math.floor((cyc - 1) / 7);
+    if (d === 1 || d === 4) R.money = .3;
+    if (d === 2){ R.g = 1; R.scouts = 1 }
+    if (d === 3){ R.r = 1; R.scouts = 1 }
+    if (d === 5){ R.g = 1; R.scouts = 1 }
+    if (d === 6) R.money = .5;
+    if (d === 7){ R.gold = [3, 5, 7, 10][w]; R.scouts = 2 }
+  } else if (cyc === 29) R.money = 1;
+  else { R.ab = V.pick(["def", "mid", "att", "gk"]); R.r = 1 }
+  if (streak === 10) R.tok++;
+  if (streak >= 100 && streak % 100 === 0) R.tok++;
+  if ([50, 150, 250, 350, 450].includes(streak)) R.crest = 1;
+  if ([100, 200, 300, 400].includes(streak)) R.kit = 1;
+  if (streak === 365){ R.kit = 1; R.gold += 100 }
+  if (streak === 500){ R.kit = 1; R.crest = 1 }
+  return R;
+}
+const AB_GROUP = { def: "захисник", mid: "півзахисник", att: "нападник", gk: "воротар" };
+function rewardText(R){
+  const t = [];
+  if (R.money) t.push(`гроші клубу: ${String(R.money).replace(".", ",")} % доходу сезону ≈ ${fmt(incomeEstimate() * R.money / 100)}`);
+  if (R.gold) t.push(`золото: ${R.gold}`);
+  if (R.g) t.push(`зелена аптечка: ${R.g}`);
+  if (R.r) t.push(`червона аптечка: ${R.r}`);
+  if (R.scouts) t.push(`звіти скаута: ${R.scouts}`);
+  if (R.ab) t.push(`здібність (+10 очок) для гравця-${AB_GROUP[R.ab]}`);
+  if (R.tok) t.push(`жетон незгоряння: ${R.tok}`);
+  if (R.crest) t.push("нова емблема");
+  if (R.kit) t.push("нова форма");
+  return t;
+}
+function loginCheck(){
+  const L = S.login, t = todayStr();
+  if (L.last === t) return;
+  let burnt = false;
+  if (!L.last) L.streak = 1;
+  else {
+    const diff = daysBetween(L.last, t);
+    if (diff <= 0) return;
+    if (diff === 1) L.streak++;
+    else if (L.tok >= diff - 1){ L.tok -= diff - 1; L.streak++; addNews("cap", `Жетон незгоряння врятував серію: пропущено ${diff - 1} ${dayW(diff - 1)}.`) }
+    else { burnt = L.streak > 1; L.streak = 1 }
+  }
+  L.last = t; L.pending = { streak: L.streak, burnt };
+  save();
+}
+function rewardSheet(){
+  const P = S.login.pending; if (!P) return;
+  const R = rewardFor(P.streak), items = rewardText(R);
+  $("#sheet").innerHTML = `<h2>Нагорода за вхід · день ${P.streak}</h2>
+    <div class="s">цикл ${R.cyc} з 30 · жетонів незгоряння: ${S.login.tok}</div>
+    ${P.burnt ? `<p style="font-size:12.5px;color:var(--bad);margin:0 0 8px">Серію перервано — почалась нова. Жетон незгоряння дають на 10-й день і кожні 100 днів.</p>` : ""}
+    <div class="plist">${items.map(x => `<div class="p"><div class="pn"><b>${x}</b></div></div>`).join("")}</div>
+    <p style="font-size:11.5px;color:var(--dim);margin:8px 0 0">Пропустиш день — серія згорить (крім випадку, коли є жетон). Круглі дні: 50 — емблема, 100 — жетон і форма, 365, 500 — особливі.</p>
+    <button class="btn" style="margin-top:12px" onclick="claimReward()">Забрати</button>`;
+  openSheet(true);
+}
+function claimReward(){
+  const P = S.login.pending; if (!P) return;
+  const R = rewardFor(P.streak), k = kitsToday(), cap = kitCap();
+  if (R.money){ const m = Math.round(incomeEstimate() * R.money / 100); book("login", m) }
+  S.gold += R.gold; k.g = Math.min(Math.max(k.g, cap.g), k.g + R.g); k.r = Math.min(Math.max(k.r, cap.r), k.r + R.r);
+  scoutLeft(); S.scout.left += R.scouts; S.login.tok += R.tok;
+  const gift = (kind, n, all) => { const free = [...Array(n).keys()].filter(i => !S.owned[kind].includes(i)); if (free.length){ const i = V.pick(free); S.owned[kind].push(i); return true } S.gold += 100; return false };
+  if (R.crest) gift("crests", CREST_COUNT);
+  if (R.kit) gift("kits", KIT_COUNT);
+  S.login.pending = null;
+  addNews("cap", `Нагорода за вхід (день ${P.streak}): ${rewardText(R).join(", ")}.`);
+  renderTop(); save();
+  if (R.ab) abilityTargetSheet(R.ab); else { closeSheet(); if (page === "home") renderHome() }
+}
+function abilityTargetSheet(group){
+  const grp = p => p.gk ? "gk" : ["ЦЗ", "КЗ"].includes(p.pos()) ? "def" : ["ОП", "ЦП", "АП"].includes(p.pos()) ? "mid" : "att";
+  const list = squadAll().filter(p => (p.abl || []).length && grp(p) === group);
+  window.__abList = list;
+  $("#sheet").innerHTML = `<h2>Здібність для ${AB_GROUP[group]}а</h2>
+    <div class="s">+10 очок здібностей — обери, кому</div>
+    <div class="plist">${list.map((p, i) => `<div class="p" onclick="giveAbility(${i})" style="cursor:pointer"><div class="pos">${p.pos()}</div>
+      <div class="pn"><b>${p.name}</b><i>${p.age} р · ${stars(p)} · очок ${p.abp || 0}</i></div></div>`).join("") || "<p style=\"font-size:12.5px\">У складі немає підходящого гравця — очки перейдуть у золото (+30).</p>"}</div>
+    <button class="btn ghost sm" style="margin-top:12px" onclick="${list.length ? "closeSheet()" : "giveGold30()"}">${list.length ? "Пізніше" : "Добре"}</button>`;
+  openSheet(true);
+}
+window.giveAbility = i => { const p = window.__abList[i]; if (!p) return; applyCard(p, "ab", 10); addNews("eye", `${p.name} отримав +10 очок здібностей за нагороду`); closeSheet(); save(); if (page === "home") renderHome() };
+window.giveGold30 = () => { S.gold += 30; closeSheet(); renderTop(); save() };
+window.claimReward = claimReward; window.rewardSheet = rewardSheet;
+function homeRewardBlock(){
+  const L = S.login, box = $("#homeReward"); if (!box) return;
+  const next = rewardFor(L.streak + 1), toRound = [10, 50, 100, 150, 200, 250, 300, 350, 365, 400, 450, 500].find(x => x >= L.streak + (L.pending ? 0 : 1));
+  box.innerHTML = L.pending
+    ? `<div class="rwd"><b>Нагорода за вхід чекає · день ${L.pending.streak}</b><br>${rewardText(rewardFor(L.pending.streak)).join(" · ")}<br><button class="btn sm" onclick="rewardSheet()">Забрати</button></div>`
+    : `<div class="rwd" style="border-color:var(--line)"><span style="color:var(--dim)">Серія входу: <b>${L.streak}</b> ${pl(L.streak, "день", "дні", "днів")} · жетонів незгоряння: ${L.tok}${toRound ? ` · до особливого дня (${toRound}): ${toRound - L.streak}` : ""}. Завтра: ${rewardText(next).join(", ")}.</span></div>`;
+}
+
+/* =======================================================================
    МАГАЗИН
    ======================================================================= */
-const CREST_PRICE = 120, KIT_PRICE = 150;
+const CREST_PRICE = 120, KIT_PRICE = 200;
 let shopView = "buy";
 $$("#shopTabs button").forEach(b => b.onclick = () => {
   shopView = b.dataset.v;
   $$("#shopTabs button").forEach(x => x.classList.toggle("on", x === b));
   renderShop();
 });
+/* аптечки пачками: ціна за штуку знижується, як у Top Eleven (5 / 10 / 25) */
+const PACKS = { g: { 5: 28, 10: 54, 25: 130 }, r: { 5: 45, 10: 85, 25: 200 } };
+function buyPack(kind, n){
+  const k = kitsToday(), cap = kitCap()[kind], price = PACKS[kind][n];
+  if (k[kind] + n > cap){ toast(`Сховище медцентру вміщує ${cap}, у тебе ${k[kind]} — стільки не влізе. Підніми медцентр.`); return }
+  if (S.gold < price){ toast(`Бракує золота: ${price}`); return }
+  S.gold -= price; k[kind] += n; renderShop(); renderTop(); save();
+}
+window.buyPack = buyPack;
+/* золото → гроші клубу: 10 золота = 1 % доходу сезону, не більше 80 % за сезон */
+function exchange(pct){
+  if (S.exch.season !== S.season) S.exch = { season: S.season, pct: 0 };
+  if (S.exch.pct + pct > 80){ toast(`За сезон можна обміняти не більше 80 % доходу — ще ${80 - S.exch.pct} %`); return }
+  const gold = pct * GOLD_K; if (S.gold < gold){ toast(`Бракує золота: ${gold}`); return }
+  const money = Math.round(incomeEstimate() * pct / 100);
+  S.gold -= gold; S.exch.pct += pct; book("gold", money);
+  addNews("cap", `Обмін золота: ${gold} золота → ${fmt(money)} на рахунок клубу`);
+  renderShop(); renderTop(); save();
+}
+window.exchange = exchange;
 function renderShop(){
   const box = $("#shopBody");
+  if (shopView === "med"){
+    const k = kitsToday(), cap = kitCap();
+    box.innerHTML = `<div class="note"><h3>Аптечки</h3><p>Зелена — +15 % свіжості одному гравцю (не більше ${GREEN_DAY} на день на команду). Червона — на день менше травми.
+      Тепер є: зелених ${k.g} з ${cap.g}, червоних ${k.r} з ${cap.r}. Поштучно — в картці гравця (${MED_PRICE.g} і ${MED_PRICE.r} золота).</p></div>
+      <div class="lab" style="margin-top:12px">Зелені</div>
+      <div class="kits">${[5, 10, 25].map(n => `<button class="btn sm ghost" onclick="buyPack('g',${n})">${n} шт · ${PACKS.g[n]} золота</button>`).join("")}</div>
+      <div class="lab" style="margin-top:12px">Червоні</div>
+      <div class="kits">${[5, 10, 25].map(n => `<button class="btn sm ghost" onclick="buyPack('r',${n})">${n} шт · ${PACKS.r[n]} золота</button>`).join("")}</div>`;
+    return;
+  }
+  if (shopView === "gold"){
+    if (S.exch.season !== S.season) S.exch = { season: S.season, pct: 0 };
+    const inc = incomeEstimate();
+    box.innerHTML = `<div class="note"><h3>Золото → гроші клубу</h3>
+      <p>${GOLD_K} золота = 1 % доходу сезону твого клубу (зараз ≈ ${fmt(inc)}). За сезон можна обміняти до 80 %: взято ${S.exch.pct} %.</p></div>
+      <div class="kits" style="margin-top:12px">${[5, 10, 20].map(p => `<button class="btn sm ghost" onclick="exchange(${p})">${p * GOLD_K} золота → ${fmt(inc * p / 100)}</button>`).join("")}</div>
+      <div class="note" style="margin-top:16px"><h3>Скаути, картки, інтенсив</h3>
+        <p>Звіт скаута — ${SCOUT_GOLD} золота (безкоштовні — щодня). Перекинути картки академії всім — ${CARD_PRICE}. «Інтенсив» вихованця — ${INTENSIVE}. Прискорення будівництва й третя черга — в «Інфраструктурі».</p></div>`;
+    return;
+  }
   if (shopView === "buy"){
     const crests = [...Array(CREST_COUNT).keys()].filter(i => !S.owned.crests.includes(i)).slice(0, 8);
     const kits   = [...Array(KIT_COUNT).keys()].filter(i => !S.owned.kits.includes(i));
@@ -1195,7 +1651,7 @@ function renderShop(){
       <div class="picks">${kits.map(i => `<button class="pickitem" data-buy="kit" data-i="${i}">
         <svg viewBox="0 0 40 46">${kitSVG(i)}</svg></button>`).join("")}</div>
       <div class="note" style="margin-top:16px"><h3>За реальні гроші</h3>
-        <p>Частина позицій у грі продаватиметься за євро через Google Play. У прототипі справжньої оплати немає — тільки золото, яке вже є на рахунку.</p></div>`;
+        <p>Золото продаватиметься пакетами через Google Play: 200 — 4,99 € · 450 — 9,99 € · 1500 — 29,99 € · 6000 — 99,99 €. У прототипі справжньої оплати немає — тільки золото на рахунку.</p></div>`;
     $$("#shopBody button[data-buy]").forEach(b => b.onclick = () => buyItem(b.dataset.buy, +b.dataset.i));
   } else {
     box.innerHTML = `
@@ -1221,7 +1677,7 @@ function buyItem(kind, i){
   renderShop(); renderTop(); save();
 }
 function toast(txt){
-  $("#sheet").innerHTML = `<h2>${txt}</h2><div class="s">магазин</div>
+  $("#sheet").innerHTML = `<h2>${txt}</h2>
     <button class="btn ghost sm" onclick="closeSheet()">Закрити</button>`;
   openSheet();
 }
@@ -1267,7 +1723,10 @@ function renderMatchPrep(){
 function openMatch(){
   const f = myFixture();
   M.hm = f.home; M.aw = f.away; M.hm.home = true; M.aw.home = false;
-  M.hm.reset(); M.aw.reset();
+  ME.crowd = M.hm === ME ? crowdNow() : 1;
+  ensureRoles();
+  if (M.day !== dayNo()){ M.day = dayNo(); autoLineup() }   // раз на день, перед матчем
+  M.hm.reset(); M.aw.reset(); setMorale();
   M.live = false; M.min = 0; M.ep = 0; M.half = 1; M.over = false; M.forced = false; M.N = V.ri(64, 76);
   const [a] = M.hm.zMid(), [b] = M.aw.zMid(); M.ph = a / (a + b);
   $("#mh").textContent = M.hm.name; $("#ma").textContent = M.aw.name;
@@ -1314,7 +1773,7 @@ function updBonus(){
 function renderBench(){
   $("#benchRow").innerHTML = ME.bench.map((p, i) =>
     `<button data-i="${i}" ${ME.subsMade >= 5 ? "disabled" : ""}>
-       <i>${p.pos()}</i><b>${p.name.split(" ")[1] || p.name}</b><u>${Math.round(p.power())}</u>
+       <i>${posLbl(p)}</i><b>${p.name.split(" ")[1] || p.name}</b><u>${Math.round(p.power())}</u>
      </button>`).join("");
   $$("#benchRow button").forEach(b => b.onclick = () => askSub(+b.dataset.i));
 }
@@ -1325,10 +1784,10 @@ function askSub(i){
     <div class="s">виходить ${inP.pos()} ${inP.name} · сила ${Math.round(inP.power())}</div>
     ${inP.gk ? `<p style="font-size:11.5px;color:var(--dim);margin:0 0 8px">Воротар може замінити лише воротаря.</p>` : ""}
     <div class="plist">${(inP.gk ? ["GK"] : V.SLOTS.slice(1)).map(s => {
-      const p = getP(s), fit = Math.round(inP.gk ? inP.power() : inP.powerIn(p.role));
+      const p = getP(s), fit = Math.round(inP.fitIn(s));
       return `<div class="p" data-s="${s}"><div class="pos">${V.SLOT_POS[s]}</div>
-        <div class="pn"><b>${p.name}</b><i>${V.SLOT_UA[s]} · ${p.injured ? '<span style="color:var(--bad)">травма</span> · ' : ""}свіжість ${Math.round(p.fresh * 100)} %</i></div>
-        <div class="pv"><b>${Math.round(p.power())}</b><i style="font-style:normal;font-size:10px;color:${fit >= p.power() ? "var(--live)" : "var(--dim)"}">стане ${fit}</i></div></div>`;
+        <div class="pn"><b>${p.name}</b><i>${V.SLOT_UA[s]} · ${p.injured ? '<span style="color:var(--bad)">травмований у цьому матчі</span> · ' : ""}свіжість ${Math.round(p.fresh * 100)} %</i></div>
+        <div class="pv"><b>${Math.round(p.fitIn(s))}</b><i style="font-style:normal;font-size:10px;color:${fit >= p.fitIn(s) ? "var(--live)" : "var(--dim)"}">стане ${fit}${famPct(inP, s) < 100 ? ` (${famPct(inP, s)} %)` : ""}</i></div></div>`;
     }).join("")}</div>
     <button class="btn ghost sm" style="margin-top:14px" onclick="closeSheet()">Скасувати</button>`;
   openSheet();
@@ -1336,7 +1795,7 @@ function askSub(i){
     const s = el.dataset.s, outP = getP(s);
     setP(s, inP); ME.bench[i] = outP; ME.subsMade++;
     if (M.played) M.played.add(inP);
-    inP.fresh = 1; closeSheet(); renderBench(); act("склад");
+    closeSheet(); renderBench(); act("склад");
     say(M.min, `Заміна: ${inP.name} замість ${outP.name}.`, "warn");
     if (!M.live) updBonus();
   });
@@ -1513,6 +1972,8 @@ $("#startBtn").onclick = () => {
   if (M.over){ nextRound(); return }
   if (M.live) return;
   M.live = true; $("#startBtn").style.display = "none";
+  markLineup();                                      // менеджер сам вивів цей склад
+  setMorale();
   M.played = new Set(ME.onPitch());                  // склад міг змінитись у підготовці
   renderMatchPrep();
   keepAwake(true);
@@ -1572,7 +2033,16 @@ function settleRound(){
   /* матч додає росту тим, хто грав (без фокуса — просто ігрова практика);
      тренувальна база тут ні до чого — вона впливає лише на тренування */
   (M.played || new Set()).forEach(p => {
-    p._mg = (p._mg || 0) + p.grow(p.slopeDay(ageF(p)) * V.MATCH_K, ageF(p));
+    p._mg = (p._mg || 0) + p.grow(p.slopeDay(ageF(p)) * V.MATCH_K * matchBoost(p), ageF(p));
+  });
+  /* травми й червоні після матчу (рішення 29.09): травма — за видом, медцентр скорочує строк;
+     червона — пропуск наступного матчу */
+  squadAll().forEach(p => {
+    if (p.injured && !(p.out > 0)){
+      const j = V.rollInjury(S.buildings.medical); p.out = j.days; p.inj = j.name;
+      addNews("inj", `${p.name}: ${j.name} — не гратиме ${j.days} ${dayW(j.days)}.`);
+    }
+    if (p.red){ p.ban = 2; addNews("cap", `${p.name} отримав червону — пропустить наступний матч.`) }
   });
   /* квитки — лише за домашній матч (15 домашніх за сезон) */
   M.gate = M.hm === ME ? Math.round(V.tickets(S.division, S.buildings.stadium) / 15) : 0;
@@ -1581,6 +2051,7 @@ function settleRound(){
   /* гроші за результат матчу: перемога 3 : нічия 1 : поразка 0,3 */
   M.pay = Math.round(V.matchPay(S.division, diff > 0 ? "w" : diff === 0 ? "d" : "l"));
   book("match", M.pay);
+  moraleAfterMatch(diff);
   addNews(diff > 0 ? "up" : "goal",
     `${diff > 0 ? "Перемога" : diff === 0 ? "Нічия" : "Поразка"} ${M.hm.goals}:${M.aw.goals}${M.gate ? ` — квитки ${fmt(M.gate)}` : ""}`);
   $("#startBtn").textContent = "Далі — наступний тур";
@@ -1591,6 +2062,7 @@ function playInstant(quiet){
   if (M.live) return;
   if (!M.hm) openMatch();
   if (M.over){ if (!quiet) showReport(); return }       // цей день уже зіграно
+  setMorale();
   V.quickMatch(M.hm, M.aw);
   M.forced = false;
   if (S.test.win){
@@ -1674,7 +2146,7 @@ const aiBase = d => Math.max(1, Math.min(20, Math.round(V.need(d))));
 function aiDay(){
   const k = V.kBase(aiBase(S.division));
   LEAGUE.forEach(t => { if (t === ME) return;
-    t.onPitch().forEach(p => p.grow(p.slopeDay(ageF(p)) * (k + V.MATCH_K), ageF(p)));
+    t.onPitch().forEach(p => p.grow(p.slopeDay(ageF(p)) * (k + V.MATCH_K * matchBoost(p)), ageF(p)));
     t.bench.forEach(p => p.grow(p.slopeDay(ageF(p)) * k, ageF(p)));
   });
 }
@@ -1687,7 +2159,7 @@ function fillSlot(role){
   const gk = role === "gk";
   const fit = p => gk ? (p.gk ? p.power() : -1) : (p.gk ? -1 : p.powerIn(role));
   const out = p => { ME.bench.splice(ME.bench.indexOf(p), 1); return p };
-  const ac = S.academy.candidates.filter(c => c.yearsLeft <= 0 && fit(c.p) >= 0).sort((a, b) => fit(b.p) - fit(a.p))[0];
+  const ac = S.academy.candidates.filter(c => (isReadyC(c) || c.p.age >= 18) && fit(c.p) >= 0).sort((a, b) => fit(b.p) - fit(a.p))[0];
   if (ac){
     signAcademy(ac, 1, Math.round(V.wageFor(ac.p) * V.CONTRACT_K[1]));
     addNews("eye", `${ac.p.name} з академії закрив порожнє місце в складі (контракт на 1 рік).`);
@@ -1748,7 +2220,7 @@ function removePlayers(gone){
   /* воротар лише з воротарів лави; польового у ворота не ставимо */
   if (gone.includes(ME.gk)) ME.gk = take(q => q.gk ? q.power() : -Infinity, true) || fillSlot("gk");
   V.SPECS.forEach(([slot, role]) => {
-    if (gone.includes(ME.xi[slot])) ME.xi[slot] = take(q => q.gk ? -Infinity : q.powerIn(role), true) || fillSlot(role);
+    if (gone.includes(ME.xi[slot])) ME.xi[slot] = take(q => q.gk ? -Infinity : q.fitIn(slot), true) || fillSlot(role);
   });
   if (!ME.bench.some(p => p.gk)) ME.bench.push(fillSlot("gk"));
   while (squadAll().length < 16) ME.bench.push(fillSlot(V.pick(Object.keys(V.ROLES))));
@@ -1778,6 +2250,8 @@ function endOfSeason(was){
    з другими місцями двох сусідніх ліг; вилітає 4. Д12 — поки що дно.
    ======================================================================= */
 const BOTTOM = 12;
+/* золото за місце (рішення 29.09, Г3) і за справжній підйом; кубок — без золота */
+const GOLD_PLACE = [40, 25, 15, 10, 10, 5, 5, 5, 0, 0, 0, 0, 0, 0, 0, 0], GOLD_UP = 20;
 function zones(d){
   if (d <= 4) return { up: d > 1 ? 3 : 0, playoff: false, down: d === BOTTOM ? 0 : d <= 3 ? 3 : 4 };
   return { up: 1, playoff: true, down: d === BOTTOM ? 0 : 4 };
@@ -1800,15 +2274,20 @@ function playoff(d, myPts){
 }
 function nextRound(quiet){
   closeSheet();
+  if (!trainedToday()) S.academy.candidates.forEach(c => { c.p.rd = Math.min(60, (c.p.rd || 0) + 2 / 3) });   // не тренував — тренер сам, слабше
   /* гроші дня: спонсор і атрибутика, зарплати, утримання (квитки — у звіті матчу) */
   const dm = dayMoney();
   book("sponsor", dm.sponsor); book("merch", dm.merch); book("wages", -dm.wages); book("upkeep", -dm.upkeep);
-  const heal = injuryHeal(S.buildings.medical);
+  /* за день: свіжість +20 % (рішення 29.09), травма й дискваліфікація — на день менше */
   [...ME.onPitch(), ...ME.bench].forEach(p => {
     p.decline(ageF(p)); p._mg = 0; p._tg = 0;
-    p.fresh = Math.min(1, p.fresh + .55); if (p.injured && V.R() < heal) p.injured = false });
+    p.fresh = Math.min(1, p.fresh + FRESH_DAY);
+    if (p.out > 0 && --p.out === 0){ p.inj = null; addNews("inj", `${p.name} одужав і знову може грати.`) }
+    if (p.ban > 0) p.ban--;
+  });
   aiDay();
   S.round++;
+  scoutTick();
   /* за 5 турів до кінця сезону — нагадування, у кого закінчується контракт (ПЛАН 44) */
   if (S.round === 26 && S.remind !== S.season){
     S.remind = S.season;
@@ -1826,7 +2305,10 @@ function nextRound(quiet){
     if (pos <= z.up && was > 1) S.division--;
     else if (pos === 2 && z.playoff){ po = playoff(was, row.p); if (po.won) S.division-- }
     else if (pos > 16 - z.down && was < BOTTOM) S.division++;
+    const gold = GOLD_PLACE[pos - 1] + (S.division < was ? GOLD_UP : 0);
+    S.gold += gold;
     S.round = 1; S.season++;
+    squadAll().forEach(p => { p.gp = 0; p.gt = 0; p.warned = false });
     addNews("up", `Сезон ${S.season - 1} завершено: ${pos} місце, призові ${fmt(prize)}. ` +
       (po ? po.text + " " : "") +
       (S.division < was ? `Підвищення — тепер Дивізіон ${S.division}!` : S.division > was ? `Виліт у Дивізіон ${S.division}.` : `Лишаємось у Дивізіоні ${S.division}.`));
@@ -1834,7 +2316,7 @@ function nextRound(quiet){
     Object.values(S.table).forEach(v => { v.p = v.w = v.d = v.l = v.gf = v.ga = 0 });
     const sum = endOfSeason(was);
     ageAcademyOneSeason();
-    S.lastSeason = { season: S.season - 1, pos, was, now: S.division, prize, rec, fin: S.fin, ...sum, playoff: po && po.text,
+    S.lastSeason = { season: S.season - 1, pos, was, now: S.division, prize, gold, rec, fin: S.fin, ...sum, playoff: po && po.text,
       expiring: squadAll().filter(p => p.ct === S.season).map(p => p.name), intake: S.academy.offers.length };
     S.fin = FIN0();
     rolled = true;
@@ -1848,13 +2330,13 @@ window.nextRound = nextRound;
 /* Вікно кінця сезону: місце, призові, гроші, ріст, кар'єри, контракти, набір в академію */
 function seasonWindow(){
   const L = S.lastSeason; if (!L) return;
-  const f = L.fin, inc = f.tickets + f.sponsor + (f.merch || 0) + (f.match || 0) + f.prize + f.sales, out = f.wages + f.upkeep + f.build + f.buys;
+  const f = L.fin, inc = f.tickets + f.sponsor + (f.merch || 0) + (f.match || 0) + f.prize + f.sales + (f.login || 0) + (f.gold || 0), out = f.wages + f.upkeep + f.build + f.buys;
   const moved = L.now < L.was ? `Підвищення — тепер Дивізіон ${L.now}!` : L.now > L.was ? `Виліт — тепер Дивізіон ${L.now}.` : `Лишаєшся в Дивізіоні ${L.now}.`;
   const line = (t, v, plus) => `<div class="at"><span>${t}</span><u style="width:auto">${plus ? "+" : "−"}${fmt(v)}</u></div>`;
   $("#sheet").innerHTML = `<h2>Сезон ${L.season}: ${L.pos} місце</h2>
     <div class="s">${L.rec.w} ${pl(L.rec.w, "перемога", "перемоги", "перемог")} · ${L.rec.d} ${pl(L.rec.d, "нічия", "нічиї", "нічиїх")} · ${L.rec.l} ${pl(L.rec.l, "поразка", "поразки", "поразок")} · м'ячі ${L.rec.gf}:${L.rec.ga} · ${L.rec.p} ${pl(L.rec.p, "очко", "очки", "очок")}</div>
     ${L.playoff ? `<p style="font-size:12.5px;color:var(--muted);margin:0 0 6px">${L.playoff}</p>` : ""}
-    <p style="font-size:14px;color:var(--gold-hi);margin:0 0 12px"><b>${moved}</b> Призові за місце: ${fmt(L.prize)}.</p>
+    <p style="font-size:14px;color:var(--gold-hi);margin:0 0 12px"><b>${moved}</b> Призові за місце: ${fmt(L.prize)}.${L.gold ? ` Золото за місце й підйом: +${L.gold}.` : ""}</p>
     <div class="lab">Гроші за сезон</div>
     <div class="ftot">
       <div><i>Усього доходів</i><b class="plus">+${fmt(inc)}</b></div>
@@ -1865,6 +2347,7 @@ function seasonWindow(){
       ${line("Квитки", f.tickets, true)}${line("Спонсор", f.sponsor, true)}
       ${line("Атрибутика", f.merch || 0, true)}${line("Гроші за матчі", f.match || 0, true)}
       ${line("Призові за місце", f.prize, true)}${line("Продаж гравців", f.sales, true)}
+      ${f.login ? line("Нагороди за вхід (гроші)", f.login, true) : ""}${f.gold ? line("Золото → гроші", f.gold, true) : ""}${L.gold ? `<div class="at"><span>Золото за досягнення</span><u style="width:auto">+${L.gold}</u></div>` : ""}
       ${line("Зарплати", f.wages)}${line("Утримання будівель", f.upkeep)}
       ${line("Будівництво", f.build)}${line("Купівля гравців", f.buys)}
     </div>
@@ -1887,7 +2370,7 @@ function addNews(icon, text){
   S.feed.unshift({ i: icon, b: text, t: `сезон ${S.season}, тур ${S.round}`, seen: false });
   S.feed = S.feed.slice(0, 20);
 }
-const sp = p => ({ n:p.name, r:p.role, g:p.gk, a:p.age, at:p.attrs, po:p.pot, gl:p.glass, pr:p.prof, fo:p.form, wp:p.wagePrem, fc:p.face, rt:p.ret, ss:p.ss, ct:p.ct, wg:p.wg, sr:p.sr, ap:p.ap, kn:p.kn, pd:p.paid, js:p.js });
+const sp = p => ({ n:p.name, r:p.role, g:p.gk, a:p.age, at:p.attrs, po:p.pot, gl:p.glass, pr:p.prof, fo:p.form, wp:p.wagePrem, fc:p.face, rt:p.ret, ss:p.ss, ct:p.ct, wg:p.wg, sr:p.sr, rg:p.pr, ap:p.ap, kn:p.kn, pd:p.paid, js:p.js, sd:p.side, fr:p.fresh, ou:p.out, bn:p.ban, ij:p.inj, rl:p.rl, mr:p.mr, gp:p.gp, gt:p.gt, wo:p.wo, wn:p.warned, rd:p.rd, cd:p.cd, ab:p.abl, ap2:p.abp, it:p.it });
 function serial(t){
   return { gk: sp(t.gk), xi: Object.fromEntries(Object.entries(t.xi).map(([k, p]) => [k, sp(p)])), bench: t.bench.map(sp) };
 }
@@ -1896,12 +2379,20 @@ function mkPlayer(d){
   p.glass = d.gl; p.prof = d.pr; p.form = d.fo; if (d.wp) p.wagePrem = d.wp; if (d.fc) p.face = d.fc;
   if (d.rt) p.ret = d.rt; if (d.ss != null) p.ss = d.ss;
   if (d.ct != null) p.ct = d.ct; if (d.wg != null) p.wg = d.wg;
-  if (d.sr) p.sr = d.sr; if (d.ap != null) p.ap = d.ap; if (d.kn != null) p.kn = d.kn;
+  if (d.sr) p.sr = d.sr; if (d.rg) p.pr = d.rg; if (d.ap != null) p.ap = d.ap; if (d.kn != null) p.kn = d.kn;
   if (d.pd != null) p.paid = d.pd; if (d.js != null) p.js = d.js;
-  p.reset(); return p;
+  if (d.sd !== undefined) p.side = d.sd;
+  p.reset();
+  if (d.fr != null) p.fresh = d.fr;
+  if (d.ou > 0){ p.out = d.ou; p.inj = d.ij } if (d.bn > 0) p.ban = d.bn;
+  if (d.rd != null) p.rd = d.rd; if (d.cd) p.cd = d.cd; if (d.ab) p.abl = d.ab; if (d.ap2 != null) p.abp = d.ap2; if (d.it) p.it = d.it;
+  if (d.rl) p.rl = d.rl; if (d.mr != null) p.mr = d.mr; if (d.gp != null){ p.gp = d.gp; p.gt = d.gt } if (d.wo) p.wo = true; if (d.wn) p.warned = true;
+  return p;
 }
 function hydrate(o, t){
-  t.gk = mkPlayer(o.gk); Object.entries(o.xi).forEach(([k, d]) => t.xi[k] = mkPlayer(d)); t.bench = o.bench.map(mkPlayer);
+  t.gk = mkPlayer(o.gk); t.bench = o.bench.map(mkPlayer);
+  /* старе збереження без флангів: фланговий в основі — на своєму фланзі */
+  Object.entries(o.xi).forEach(([k, d]) => { const p = t.xi[k] = mkPlayer(d); if (d.sd === undefined && V.SLOT_SIDE[k] && V.isFlank(p.role)) p.side = V.SLOT_SIDE[k] });
 }
 function save(){
   try {
@@ -1910,9 +2401,9 @@ function save(){
       money: S.money, gold: S.gold, focus: S.focus, table: S.table,
       results: S.results, feed: S.feed.slice(0, 12), buildings: S.buildings,
       queue: S.queue, owned: S.owned, squad: serial(ME), trained: S.trained, test: S.test,
-      academy: S.academy.candidates.map(c => ({ p: sp(c.p), yearsLeft: c.yearsLeft })),
+      academy: S.academy.candidates.map(c => ({ p: sp(c.p) })),
       offers: (S.academy.offers || []).map(sp), fin: S.fin, scout: S.scout, scouted: S.scouted,
-      taken: S.taken, lastSeason: S.lastSeason, remind: S.remind,
+      taken: S.taken, lastSeason: S.lastSeason, remind: S.remind, lineupAt: S.lineupAt, kits: S.kits, login: S.login, exch: S.exch, q3: S.q3,
       fa: S.fa.map(r => ({ p: sp(r.p), div: r.div, from: r.from, mine: r.mine })),
       sys: S.sys.map(r => ({ p: sp(r.p), div: r.div })),
     }));
@@ -1928,14 +2419,16 @@ function load(){
       results: o.results || [], feed: o.feed || [], buildings: o.buildings || S.buildings,
       queue: o.queue || [], owned: o.owned || { crests: [o.club.crest], kits: [o.club.kit] },
       trained: o.trained || "", test: o.test || { on: false, win: false },
-      fin: o.fin || FIN0(), scout: o.scout || null, scouted: o.scouted || null,
+      fin: o.fin || FIN0(), scout: o.scout && o.scout.left != null ? { left: o.scout.left } : { left: 10 }, scouted: o.scouted || null,
       taken: o.taken || null, lastSeason: o.lastSeason || null, remind: o.remind || 0,
+      lineupAt: o.lineupAt ?? null, kits: o.kits || { g: 10, r: 5, day: 0, gUsed: 0, rUsed: [] },
+      login: o.login || { last: "", streak: 0, tok: 0, pending: null }, exch: o.exch || { season: 0, pct: 0 }, q3: o.q3 || 0,
     });
     S.fa = (o.fa || []).map(r => ({ p: mkPlayer(r.p), div: r.div, from: r.from, mine: r.mine }));
     S.sys = (o.sys || []).map(r => ({ p: mkPlayer(r.p), div: r.div }));
     buildWorld();
-    if (o.squad) hydrate(o.squad, ME);
-    S.academy.candidates = (o.academy || []).map(c => ({ p: mkPlayer(c.p), yearsLeft: c.yearsLeft }));
+    if (o.squad){ hydrate(o.squad, ME); ensureRoles() }
+    S.academy.candidates = (o.academy || []).map(c => { const p = mkPlayer(c.p); if (p.rd == null) p.rd = (c.yearsLeft || 0) <= 0 ? 60 : 30 * (2 - c.yearsLeft); return { p } });
     S.academy.offers = (o.offers || []).map(mkPlayer);
     return true;
   } catch(e){ return false }
@@ -1961,6 +2454,7 @@ $("#cgo").onclick = () => {
   buildWorld();
   /* стартові контракти: закінчуються в різні сезони, щоб не всі разом */
   squadAll().forEach(p => { p.ss = p.power(); p.wg = V.wageFor(p); p.ct = S.season + V.ri(0, 3) });
+  ensureRoles();
   S.fin = FIN0();
   stockAcademyAtFounding();
   initialFreeAgents();
@@ -1972,11 +2466,13 @@ $("#cgo").onclick = () => {
   save();
 };
 function startGame(){
+  loginCheck();
   $("#app").classList.add("on");
   buildRail();
   openMatch();
   show("home");
   renderTop();
+  if (S.login.pending) rewardSheet();
 }
 /* заставка → або гра, або створення клуба */
 setTimeout(() => {

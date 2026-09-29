@@ -44,11 +44,44 @@ const SLOT_UA={GK:"воротар",RB:"правий захисник",CB1:"це�
   LB:"лівий захисник",DM:"опорний півзахисник",CM:"центральний півзахисник",AM:"атакувальний півзахисник",
   RW:"правий вінгер",ST:"нападник",LW:"лівий вінгер"};
 
+/* Як гравець знає позицію (рішення 29.09, прогін vertical/sim/positions.js): своя 100 % · своя, але інший фланг 95 % ·
+   сусідня 92 % · через одну 85 % · чужа 70 % · воротар у полі чи польовий у воротах 30 %.
+   Сусідні позиції: ЦЗ–ОП, ЦЗ–КЗ, КЗ–ВНГ, ОП–ЦП, ЦП–АП, АП–НП, АП–ВНГ, ВНГ–НП. У кожного флангового свій фланг. */
+const SLOT_SIDE={RB:"R",LB:"L",RW:"R",LW:"L"};
+const POS_EDGES=[["ЦЗ","ОП"],["ЦЗ","КЗ"],["КЗ","ВНГ"],["ОП","ЦП"],["ЦП","АП"],["АП","НП"],["АП","ВНГ"],["ВНГ","НП"]];
+function posDist(a,b){
+  if(a===b) return 0;
+  const seen={[a]:0}, q=[a];
+  while(q.length){ const x=q.shift();
+    for(const [u,v] of POS_EDGES){ const y=u===x?v:v===x?u:null; if(y&&seen[y]==null){ seen[y]=seen[x]+1; q.push(y) } } }
+  return seen[b] ?? 9;
+}
+const isFlank = role => ROLE_POS[role]==="КЗ" || ROLE_POS[role]==="ВНГ";
+function fam(p, slot){
+  const g = p.gk ? "ВР" : ROLE_POS[p.role], sg = SLOT_POS[slot];
+  if(!g || !sg) return 1;
+  if(g==="ВР" || sg==="ВР") return g===sg ? 1 : .3;
+  const d = posDist(g, sg);
+  if(d===0) return SLOT_SIDE[slot] && p.side && p.side!==SLOT_SIDE[slot] ? .95 : 1;
+  return d===1 ? .92 : d===2 ? .85 : .7;
+}
+
 /* ---------- калібровані ручки ---------- */
 let K=40, STEP_P=.712, CONV=.0728, FOUL_BASE=.50,
     CORNER_P=.30, CORNER_CONV=.095, FK_P=.10, FK_CONV=.19,
     PEN_P=.016, PEN_CONV=.76, INJ_BASE=.0069, HOME_BASE=.045, HOME_STAND=.034,
-    YEL_BAND=.225, RED_P=.0012;
+    YEL_BAND=.225, RED_P=.0012, AI_FRESH=.80;
+
+/* ---------- травми за видами (рішення 29.09; 1 день гри ≈ 12 днів життя) ----------
+   [назва, частка, від, до] днів; медцентр рівня M скорочує строк на 3 % × M. */
+const INJURIES=[["забій",.25,1,1],["розтягнення м'яза",.30,2,3],["травма задньої поверхні стегна",.20,3,5],
+  ["пошкодження зв'язок гомілкостопу",.12,4,6],["травма меніска",.07,6,10],["перелом",.03,6,10],["розрив хрестоподібних зв'язок",.03,15,23]];
+function rollInjury(medical){
+  let r=rnd();
+  for(const [n,p,a,b] of INJURIES){ if(r<p){ const d=a+Math.floor(rnd()*(b-a+1));
+    return { name:n, days:Math.max(1,Math.round(d*(1-.03*Math.min(20,medical||0)))) } } r-=p }
+  return { name:"забій", days:1 };
+}
 const BIAS = -K*Math.log10(1/STEP_P-1);
 const duel=(a,b,bias=0,k=K)=>1/(1+Math.pow(10,-((a-b+bias)/k)));
 
@@ -99,9 +132,39 @@ function limCapFor(level){
   const d=divOf(level/.92);
   return CEIL[Math.max(1, d-(rnd()<.03?6:2))];
 }
+/* ---------- кожна характеристика старіє по-своєму (рішення 29.09, прогін vertical/sim/age-attrs.js) ----------
+   Швидкість і сила ростуть до 24–27 і в’януть найшвидше; пас, техніка, відбір, повітря — пізніше й повільніше;
+   воротар — найпізніше. Крива ролі виходить сама з ваг її характеристик: вінгери — пік раніше, захисники й півзахисники — пізніше. */
+const APEAK=[24,27,25,27,28,26,29,29], AHOLD=[26,30,28,31,32,30,32,32], ADROP=[.035,.02,.03,.01,.008,.015,.015,.015];
+function attrC(i,age,gk){
+  const st=.45, pk=gk?30:APEAK[i], hold=gk?33:AHOLD[i], drop=gk?.02:ADROP[i];
+  if(age<=pk){ const f=Math.max(0,(age-16)/(pk-16)); return st+(1-st)*(1-Math.pow(1-f,2)) }
+  if(age<=hold) return 1;
+  let v=1; for(let a=hold+1;a<=age;a++) v-=drop*(a>31?1.5:1);
+  return Math.max(.3,v);
+}
+const CURVES={};
+/* крива ролі: 0 у 16 років … 1 у піку, далі спадає; pk0–pk1 — роки піку (для тексту в картці) */
+function roleCurve(key){
+  if(CURVES[key]) return CURVES[key];
+  const gk=key==="gk", w=gk?GK_W:ROLES[key];
+  const C=a=>w.reduce((sum,wi,i)=>sum+wi*attrC(i,a,gk),0)/100;
+  const c16=C(16); let mx=0; for(let a=16;a<=36;a+=.25) mx=Math.max(mx,C(a));
+  const f=a=>{ const fl=Math.floor(a), fr=a-fl; return (C(fl)*(1-fr)+C(fl+1)*fr-c16)/(mx-c16) };
+  let pk0=16,pk1=16; for(let a=16;a<=36;a+=.25){ if(f(a)>=.985){ if(pk0===16) pk0=a; pk1=a } }
+  return CURVES[key]={f,pk0,pk1};
+}
+/* сила на лінії віку: від старту (у 16) до межі за кривою ролі */
+const lineFor=(lim,role,age)=>{ const st=s16Of(lim); return st+(lim-st)*Math.max(0,roleCurve(role).f(Math.min(36,age))) };
+/* яку межу має гравець, який у цьому віці стоїть на лінії з силою y */
+function limForCurve(y,role,age){
+  const g=Math.max(.15,roleCurve(role).f(Math.min(36,age)));
+  let lim = y>S16 ? S16+(y-S16)/g : 0;
+  if(lim < S16/.7) lim = y/(.7+.3*g);
+  return lim;
+}
 function fitAge(level, role, age, cap=99){
-  const pk = PEAK[ROLE_POS[role]] ?? 25.5;
-  while(age<33 && limFor(level/.94, age, pk)>cap) age++;
+  while(age<33 && limForCurve(level/.94, role, age)>cap) age++;
   return age;
 }
 
@@ -110,6 +173,34 @@ const F1="Дієго Пабло Хав'єр Ніко Аран Ізан Марк�
 const L1="Ортега Салазар Бенітес Кабрера Ромеро Наварро Ібаньєс Кампос Естевес Мендес Гальярдо Сеговія Аранда Пірес Домінго Валеро Ескудеро Морено Кастро Рейна Сорія Марсаль Пуйоль Аларкон Гуерра Осуна Вергара Ліма Дуарте Ковач Мельник Рібас Соарес Аюсо Бланко Кінтана Ферран Урбіна Ібарра Салас Тревіньо Ленц Пасторе Кіріко Фалькао".split(" ");
 const CLUBS=["Кантера","Атлетіко Марбелья","Реал Пенья","Ла Пальма","Естрелья","Аврора","Сітадель","Костеро","Вердемар","Санта Крус","Ібеля","Норте","Оріон","Кастельо","Понтеведра","Лагуна"];
 const uname=()=>pick(F1)+" "+pick(L1);
+
+/* ---------- здібності (рішення 25–29.09; числа ефектів — пробні, без прогону) ----------
+   Скільки їх — за зірками: 1–2★ одна, 3★ дві, 4–6★ три. Рівні 1–5, рівень = 10 очок; друга відкривається на 10 очках, третя на 20.
+   Діє лише у своєму моменті матчу: гра головою — кутові, стандарти — штрафні й пенальті, витривалий — втома,
+   швидкий — атака з флангів, рефлекси й ловець пенальті — воротар. */
+const FIELD_POS=["ЦЗ","КЗ","ОП","ЦП","АП","ВНГ","НП"];
+const ABIL={
+  head:{name:"Гра головою",hint:"кутові й навіси: гол головою частіше",pos:FIELD_POS},
+  stam:{name:"Витривалий",hint:"повільніше втомлюється",pos:FIELD_POS},
+  set:{name:"Стандарти",hint:"штрафні й пенальті — точніше",pos:["ОП","ЦП","АП","ВНГ","НП"]},
+  fast:{name:"Швидкий",hint:"атака з флангів — трохи сильніший",pos:["КЗ","ВНГ","НП","АП"]},
+  gkref:{name:"Рефлекси",hint:"воротар сильніший у матчі",pos:["ВР"]},
+  gkpen:{name:"Ловець пенальті",hint:"частіше відбиває пенальті",pos:["ВР"]},
+};
+const abilCount = stars => stars<=2 ? 1 : stars===3 ? 2 : 3;
+function pickAbilities(p){
+  const ids=Object.keys(ABIL).filter(id=>ABIL[id].pos.includes(ROLE_POS[p.key]));
+  const out=[]; while(out.length<abilCount(p.stars()) && ids.length){ out.push(ids.splice(Math.floor(rnd()*ids.length),1)[0]) }
+  return out;
+}
+/* рівень здібності гравця: 0 — немає чи ще не відкрита */
+function abLv(p,id){
+  if(!p||!p.abl) return 0;
+  const i=p.abl.indexOf(id); if(i<0) return 0;
+  const T=p.abp||0, open=Math.min(p.abl.length,1+Math.floor(T/10));
+  if(i>=open) return 0;
+  return Math.min(5,1+Math.floor(Math.max(0,T-10*i)/10));
+}
 
 /* ---------- гравець ----------
    pot — межа гравця (до якої сили він може дорости за кар'єру), з неї — зірки.
@@ -124,22 +215,22 @@ class P{
       level*(1+(w[i]-12.5)/12.5*spread)*rf(.93,1.07))));
     const k=level/this.power();            // сила в ролі = рівень, щоб стеля дивізіону трималась
     this.attrs=this.attrs.map(a=>Math.max(5,Math.min(99,a*k)));
-    this.pk  = PEAK[ROLE_POS[gk?"gk":role]] ?? 25.5;
-    this.pot = lim ?? Math.min(99, Math.max(this.power(), limFor(this.power()/rf(.88,1), this.age, this.pk)));
+    this.key = gk?"gk":role;
+    const rc = roleCurve(this.key); this.pk = rc.pk0; this.pk1 = rc.pk1;
+    this.pot = lim ?? Math.min(99, Math.max(this.power(), limForCurve(this.power()/rf(.88,1), this.key, this.age)));
     this.ret = 33 + ri(0,2) + (gk?2:0);    // вік завершення кар'єри; точно його не знає ніхто
     this.glass= rf(.5,2);
     this.prof = rf(.6,1.2);
     this.form = rf(.85,1.12);
+    this.side = isFlank(role) ? (rnd()<.5 ? "R" : "L") : null;   // фланг захисника чи вінгера
+    this.abl = pickAbilities(this);
+    this.abp = Math.floor(rnd()*(8*this.abl.length+1));            // дорослі мають трохи прокачаних; вихованець стартує з 0
     this.reset();
   }
   stars(){return starsOfLim(this.pot)}
-  line(ageF){return lineAt(this.pot,this.pk,ageF)}
-  /* скільки сили за день дає лінія: межа мінус старт, поділені на роки до піку.
-     Після піку гравець більше не росте. */
-  slopeDay(ageF){
-    if(ageF>=this.pk+1) return 0;
-    return (this.pot-s16Of(this.pot))/(this.pk-16)/30;
-  }
+  line(ageF){return lineFor(this.pot,this.key,ageF)}
+  /* скільки сили за день дає лінія: вона росте лише до піку, далі — 0 */
+  slopeDay(ageF){ return Math.max(0, this.line(ageF+1/30)-this.line(ageF)) }
   /* Піднімає силу в ролі на dP, але не вище лінії віку. Фокус тренування тягне
      свою характеристику сильніше; сила в ролі від цього росте так само. */
   grow(dP, ageF, focus=-1){
@@ -151,15 +242,16 @@ class P{
     this.attrs=this.attrs.map((a,i)=>Math.min(99,a+k*v[i]));
     return this.power()-cur;
   }
-  /* Після піку (+4 роки) повільно слабшають швидкість, сила й витривалість
-     (у воротаря — реакція, стрибок, сила). Техніка, пас, удар не падають. */
+  /* Понад лінією віку триматись не можна: якщо сила вища за лінію — всі характеристики опускаються до неї
+     (лінія після піку спадає за кривою ролі: швидкість першою, пас останнім). */
   decline(ageF){
-    const start=this.pk+4; if(ageF<start) return 0;
-    const cur=this.power(), d=.10+.03*(ageF-start);
-    (this.gk?[0,4,6]:[0,1,2]).forEach(i=>{this.attrs[i]=Math.max(5,this.attrs[i]-d)});
+    const l=this.line(ageF), cur=this.power();
+    if(cur<=l) return 0;
+    const k=l/cur; this.attrs=this.attrs.map(x=>Math.max(5,x*k));
     return this.power()-cur;
   }
-  reset(){this.fresh=1;this.rating=6;this.goals=0;this.assists=0;
+  /* keep — свіжість не скидати: у твоїй команді вона переходить з дня на день (рішення 29.09) */
+  reset(keep){if(!keep)this.fresh=1;this.rating=6;this.goals=0;this.assists=0;
           this.yellow=0;this.red=false;this.injured=false;this.touches=0}
   power(){const w=this.gk?GK_W:ROLES[this.role];
     return this.attrs.reduce((s,a,i)=>s+a*w[i],0)/100}
@@ -168,6 +260,12 @@ class P{
     if(!w) return this.power();
     return this.attrs.reduce((s,a,i)=>s+a*w[i],0)/100}
   eff(m){return this.power()*(.7+.3*this.fresh)*m*this.form}
+  /* сила на місці в складі: за роллю місця × як знає позицію */
+  fitIn(slot){return (slot==="GK" ? (this.gk ? this.power() : this.powerIn("gk")) : this.powerIn(SLOT_ROLE[slot])) * fam(this,slot)}
+  effIn(slot,m){
+    const fa = SLOT_ROLE[slot] && ["RB","LB","RW","LW","ST","AM"].includes(slot) ? .008*abLv(this,"fast") : 0;
+    return this.fitIn(slot)*(1+fa)*(.7+.3*this.fresh)*m*this.form;
+  }
   pos(){return ROLE_POS[this.role]||"—"}
 }
 
@@ -177,6 +275,7 @@ const SPECS=[["RB","fb_def"],["CB1","cb_destroyer"],["CB2","cb_builder"],["LB","
              ["RW","w_fast"],["ST","st_fast"],["LW","w_inv"]];
 const BENCHR=["cb_builder","fb_wing","dm_deep","am_ten","w_cross","st_target","st_false9"];
 const SLOTS=["GK","RB","CB1","CB2","LB","DM","CM","AM","RW","ST","LW"];
+const SLOT_ROLE=Object.fromEntries(SPECS);
 
 /* Вік гравця основи: здебільшого 23–29, молодь в основі рідко. Стартовий склад
    твого клубу — 22–29 років (середній ≈ 24–25). */
@@ -192,12 +291,16 @@ class Team{
     SPECS.forEach(([slot,role])=>{this.xi[slot]=mkAt(role,level*rf(.92,1.08),false,ageXI())});
     this.bench=[mkAt("gk",level*.92,true,ri(19,33)),
       ...BENCHR.map(r=>mkAt(r,level*rf(.82,1.0),false,ri(18,33)))];
+    Object.entries(SLOT_SIDE).forEach(([s,sd])=>{this.xi[s].side=sd});   // основа — на своїх флангах
     this.subsMade=0;
     this.reset();
   }
   all(){return [this.gk,...SLOTS.slice(1).map(s=>this.xi[s]),...this.bench]}
   onPitch(){return [this.gk,...SLOTS.slice(1).map(s=>this.xi[s])]}
-  reset(){this.onPitch().forEach(p=>p.reset());this.bench.forEach(p=>p.reset());
+  /* свіжість: твоя команда несе втому з дня на день; суперник-ШІ робить ротацію сам —
+     його основа виходить у середньому на AI_FRESH (як у людини, що робить ротацію, прогін fatigue.js) */
+  reset(){const keep=this.human;this.onPitch().forEach(p=>p.reset(keep));this.bench.forEach(p=>p.reset(keep));
+    if(!keep) this.onPitch().forEach(p=>{p.fresh=AI_FRESH});
     this.goals=0;this.shots=0;this.attacks=0;this.yellows=0;this.reds=0;
     this.injuries=0;this.men=11;this.subsMade=0;this.presence=0;this.actions=0}
   chem(){ /* хімія: природна позиція + свіжість зв'язків */
@@ -205,25 +308,27 @@ class Team{
     return Math.max(-.04, .02 + .005*ok - .03);
   }
   mult(){
-    let b=this.chem()+this.tacBonus+this.presence;
+    let b=this.chem()+this.tacBonus+this.presence+(this.morale||0);   // мораль основи: до ±3 % (рішення 29.09)
     let m=1+Math.min(.12,b);                       // стеля сумарних бонусів 12 %
-    if(this.home) m*=1+HOME_BASE+HOME_STAND*.5;
+    /* дома: частина переваги — від уболівальників, × заповненість (crowd: маленький 0,5 … великий повний 1,5) */
+    if(this.home) m*=1+HOME_BASE+HOME_STAND*.5*(this.crowd ?? 1);
     if(this.men<11) m*=.85;
     return m;
   }
   zone(names){
-    const ps=names.map(n=>this.xi[n]).filter(p=>p&&!p.red);
+    const ps=names.map(n=>[n,this.xi[n]]).filter(([,p])=>p&&!p.red);
     if(!ps.length) return [1,[]];
     const m=this.mult();
-    return [ps.reduce((s,p)=>s+p.eff(m),0)/ps.length, ps];
+    return [ps.reduce((s,[n,p])=>s+p.effIn(n,m),0)/ps.length, ps.map(([,p])=>p)];
   }
+  gkPower(){return this.gk.fitIn("GK")*(1+.01*abLv(this.gk,"gkref"))}
   zDef(){return this.zone(["RB","CB1","CB2","LB"])}
   zMid(){return this.zone(["DM","CM","AM"])}
   zLeft(){return this.zone(["LW","LB"])}
   zRight(){return this.zone(["RW","RB"])}
   zAtt(){return this.zone(["ST","RW","LW","AM"])}
   tire(mins){this.onPitch().forEach(p=>{if(p.red)return;
-    p.fresh=Math.max(.35,p.fresh-.0030*(1.5-p.attrs[2]/100)*this.press*mins)})}
+    p.fresh=Math.max(.35,p.fresh-.0030*(1.5-p.attrs[2]/100)*this.press*mins*(1-.05*abLv(p,"stam")))})}
   rate(){const ps=this.onPitch();return ps.reduce((s,p)=>s+p.power(),0)/ps.length}
   wageBill(){return this.all().reduce((s,p)=>s+wageOf(p),0)}
 }
@@ -241,7 +346,7 @@ function foulCheck(att,dfn,df,danger,out){
     else out.push({t:"yel",team:dfn,p:df,txt:`Жовта картка: ${df.name}.`});}
   if(danger && R()<FK_P){
     const sh=att.onPitch().slice(1).reduce((a,b)=>a.attrs[5]>b.attrs[5]?a:b);
-    if(R()<FK_CONV*duel(sh.attrs[5],dfn.gk.power(),0,90)){
+    if(R()<FK_CONV*(1+.06*abLv(sh,"set"))*duel(sh.attrs[5],dfn.gkPower(),0,90)){
       att.goals++;sh.goals++;sh.rating+=1;
       out.push({t:"goal",team:att,p:sh,txt:`ШТРАФНИЙ! ${sh.name} кладе м'яч у дев'ятку.`});}
     else out.push({t:"sp",team:att,txt:`Штрафний небезпечно, але повз.`});
@@ -276,14 +381,15 @@ function episode(hm,aw,ph){
   const [a3,ap3]=att.zAtt(); const [d3]=dfn.zDef();
   if(ap3.length){
     const v=pick(ap3);
-    if(R()<INJ_BASE*v.glass*(2-v.fresh)){v.injured=true;att.injuries++;
+    /* утомлений травмується частіше: свіжість 50 % — удвічі частіше за свіжого (рішення 29.09) */
+    if(!v.injured && R()<INJ_BASE*v.glass*(3-2*v.fresh)){v.injured=true;att.injuries++;
       out.push({t:"inj",team:att,p:v,txt:`${v.name} лишається лежати. Схоже на пошкодження.`});}
   }
   if(R()>duel(a3,d3,BIAS+lineDef)){
     if(R()<CORNER_P && ap3.length){
       const hdr=ap3.reduce((a,b)=>a.attrs[7]>b.attrs[7]?a:b);
       const [ah]=att.zAtt(),[dh]=dfn.zDef();
-      if(R()<CORNER_CONV*duel(ah,dh,0,90)*2){
+      if(R()<CORNER_CONV*(1+.08*abLv(hdr,"head"))*duel(ah,dh,0,90)*2){
         att.goals++;hdr.goals++;hdr.rating+=1;
         out.push({t:"goal",team:att,p:hdr,zone:"box",txt:`КУТОВИЙ — ${hdr.name} виграє повітря і б'є головою!`});}
       else out.push({t:"corner",team:att,zone:"box",txt:`Кутовий у ${att.name}. Захист вибиває.`});
@@ -292,7 +398,7 @@ function episode(hm,aw,ph){
   }
   if(R()<PEN_P){
     const k=ap3.length?ap3.reduce((a,b)=>a.attrs[5]>b.attrs[5]?a:b):att.xi.ST;
-    if(R()<PEN_CONV){att.goals++;k.goals++;k.rating+=1;
+    if(R()<Math.min(.95,PEN_CONV*(1+.03*abLv(k,"set"))*(1-.05*abLv(dfn.gk,"gkpen")))){att.goals++;k.goals++;k.rating+=1;
       out.push({t:"goal",team:att,p:k,zone:"box",txt:`ПЕНАЛЬТІ — ${k.name} б'є впевнено. Гол!`});}
     else {k.rating-=.8;out.push({t:"sp",team:att,zone:"box",txt:`ПЕНАЛЬТІ — і ${k.name} не влучає!`});}
     return out;
@@ -300,7 +406,7 @@ function episode(hm,aw,ph){
   att.shots++;
   const sh = ap3.length? wpick(ap3,ap3.map(p=>p.attrs[5])) : att.xi.ST;
   sh.touches++;
-  if(R()<CONV*2*duel(sh.attrs[5],dfn.gk.power(),0,90)){
+  if(R()<CONV*2*duel(sh.attrs[5],dfn.gkPower(),0,90)){
     att.goals++;sh.goals++;sh.rating+=1;
     const others=ap3.filter(p=>p!==sh);
     let asst=null; if(others.length){asst=pick(others);asst.assists++;asst.rating+=.6}
@@ -443,9 +549,9 @@ window.VERT = {
   R, ri, rf, pick, wpick, reseed, get SEED(){return SEED},
   ATTR, ATTR_SHORT, ROLES, GK_W, ROLE_UA, ROLE_POS, SLOT_POS, SLOT_UA,
   CEIL, divOf, STAR_TOP, LIM_BAND, starsOfLim, PEAK, S16, s16Of, lineAt, limFor,
-  kBase, MATCH_K, fitAge, limCapFor, P, Team, SPECS, BENCHR, SLOTS,
+  kBase, MATCH_K, fitAge, limCapFor, lineFor, roleCurve, ABIL, abLv, abilCount, pickAbilities, P, Team, SPECS, BENCHR, SLOTS, SLOT_ROLE, SLOT_SIDE, fam, isFlank,
   episode, quickMatch, makeFixtures, duel, uname, CLUBS,
   wageOf, wageFor, valueOf, divisionIncome, baseIncome, devIncome, need, levelOf, strengthAt, ceilLevel, signTier, stadiumFor,
   ticketsSeason, sponsorSeason, placePrize, upkeepSeason, wageCap, buildCost, buildHours, transferCommission, CONTRACT_K,
-  typicalTotal, tickets, sponsor, merch, matchPay, prizeAt8, seats, fans,
+  typicalTotal, tickets, sponsor, merch, matchPay, prizeAt8, seats, fans, INJURIES, rollInjury, AI_FRESH,
 };

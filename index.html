@@ -339,6 +339,33 @@ tr.down td:first-child{box-shadow:inset 2px 0 0 var(--bad)}
 .tk em{display:block;font-style:normal;font-size:8.5px;font-weight:800;color:rgba(255,255,255,.75);white-space:nowrap;
        text-shadow:0 1px 3px rgba(0,0,0,.9);line-height:1.15}
 .tk em s{text-decoration:none;color:var(--gold);letter-spacing:-.5px}
+.tk em .fp{color:var(--warn)}
+.tk .c{position:relative}
+.tk .fbar{position:absolute;left:3px;right:3px;bottom:-5px;height:3px;border-radius:2px;background:rgba(0,0,0,.55);overflow:hidden}
+.tk .fbar i{display:block;height:100%;background:var(--live)}
+.tk .fbar.lo i{background:var(--warn)}.tk .fbar.vlo i{background:var(--bad)}
+.tk.hurt .c{border-color:var(--bad);opacity:.55}
+.rdrow{margin:6px 0 4px;font-size:11px;color:var(--dim)}
+.rdbar{height:5px;border-radius:3px;background:rgba(255,255,255,.08);margin-top:3px;overflow:hidden}
+.rdbar i{display:block;height:100%;background:var(--gold)}
+.abl{font-size:11.5px;margin:4px 0}.abl u{text-decoration:none;color:var(--dim)}
+.cards{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:5px;margin:8px 0}
+.card{border:1px solid var(--line);background:rgba(17,24,35,.7);color:var(--text);border-radius:9px;padding:6px 2px;cursor:pointer;text-align:center}
+.card i{display:block;font-style:normal;font-size:9.5px;color:var(--dim)}.card b{font-size:15px}
+.card.c-pw b{color:var(--live)}.card.c-rd b{color:var(--gold-hi)}.card.c-ab b{color:#7fb6ff}
+.cdone{font-size:11.5px;color:var(--dim);margin:6px 0}
+.ab{display:flex;flex-direction:column;margin:4px 0}.ab i{font-style:normal;font-size:11px;color:var(--dim)}.ab.lock b{color:var(--dim)}
+.rwd{margin:10px 0 0;padding:10px 12px;border:1px solid var(--gold);border-radius:12px;background:rgba(201,169,97,.08);font-size:12.5px}
+.rwd b{color:var(--gold-hi)}.rwd .btn{margin-top:8px}
+.mscout{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px}.mscout .btn{padding:5px 9px;font-size:11px}
+.tk .md{position:absolute;top:-2px;right:-2px;width:8px;height:8px;border-radius:50%;border:1.5px solid #0b1118}
+.cterm.on{border-color:var(--gold);box-shadow:inset 0 0 0 1px var(--gold)}
+.tk em .hu{color:var(--bad)}
+.kits{display:flex;flex-wrap:wrap;gap:8px;margin:10px 0 0}
+.kits .btn{font-size:12px}
+.lbtns{display:flex;flex-wrap:wrap;align-items:center;gap:6px 8px;margin:0 0 8px}
+.lbtns .btn{padding:6px 10px;font-size:11.5px}
+.lustat{font-size:10.5px;color:var(--dim)}
 .lbench{display:flex;flex-wrap:wrap;gap:10px 4px;padding:10px 6px;border-radius:14px;
         background:rgba(17,24,35,.55);border:1px solid var(--line-soft)}
 .tk.bt{position:relative;transform:none;left:auto;top:auto}
@@ -618,6 +645,7 @@ tr.po td:first-child{box-shadow:inset 2px 0 0 var(--gold)}
         <span class="tag" id="homeTag">Дивізіон 12 · Сезон 1</span>
         <h1 id="homeTitle">—</h1>
         <p id="homeLine">—</p>
+        <div id="homeReward"></div>
         <div class="home-cta">
           <button class="btn" id="homePlay">Грати матч</button>
           <button class="btn ghost" id="homeSeason" hidden>До кінця сезону</button>
@@ -658,6 +686,7 @@ tr.po td:first-child{box-shadow:inset 2px 0 0 var(--gold)}
           <div class="wakewarn" id="wakewarn" hidden>Екран може гаснути: телефон не дозволив тримати його увімкненим. Збільш у налаштуваннях телефону час до згасання екрана.</div>
           <div id="mPrep">
             <div class="lab">Склад на матч · перетягни гравця на іншого, щоб поміняти · тап — картка · з лави — затримай палець</div>
+            <div class="lbtns"><button class="btn ghost sm" data-lu="best">Найкращий склад</button><button class="btn ghost sm" data-lu="ok">Підтвердити склад</button><span class="lustat"></span></div>
             <div class="lineup">
               <div class="pitchbox lpitch" id="mPitch"></div>
               <div class="lbench" id="mBench"></div>
@@ -689,6 +718,7 @@ tr.po td:first-child{box-shadow:inset 2px 0 0 var(--gold)}
       <h2 class="t">Команда</h2>
       <p class="sub" id="teamSub">—</p>
       <div class="lab">Тап — картка гравця · перетягни на іншого — поміняти місцями · з лави — затримай палець</div>
+      <div class="lbtns"><button class="btn ghost sm" data-lu="best">Найкращий склад</button><button class="btn ghost sm" data-lu="ok">Підтвердити склад</button><span class="lustat"></span></div>
       <div class="lineup">
         <div class="pitchbox lpitch" id="teamPitch"></div>
         <div class="lbench" id="subs"></div>
@@ -799,6 +829,8 @@ tr.po td:first-child{box-shadow:inset 2px 0 0 var(--gold)}
       <p class="sub">Емблеми, форми та інша косметика</p>
       <div class="tabs" id="shopTabs">
         <button data-v="buy" class="on">Купити</button>
+        <button data-v="med">Аптечки</button>
+        <button data-v="gold">Золото</button>
         <button data-v="mine">Моє</button>
       </div>
       <div id="shopBody"></div>
