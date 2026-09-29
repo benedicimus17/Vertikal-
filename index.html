@@ -650,6 +650,7 @@ tr.po td:first-child{box-shadow:inset 2px 0 0 var(--gold)}
           <button class="btn" id="homePlay">Грати матч</button>
           <button class="btn ghost" id="homeSeason" hidden>До кінця сезону</button>
           <button class="btn ghost" id="homeSquad">Склад</button>
+          <button class="btn ghost" id="homeLast" hidden>Останній матч</button>
         </div>
       </div>
       <aside class="home-right">
@@ -850,11 +851,12 @@ tr.po td:first-child{box-shadow:inset 2px 0 0 var(--gold)}
       </div>
       <div class="card" style="max-width:520px">
         <div class="hd"><span>Режим перевірки</span><span class="r" id="testState">вимкнено</span></div>
-        <div style="padding:10px 14px 0"><p class="sub" style="margin:0">Щоб швидко пройти світ: матч грається миттєво й одразу показує результат і приріст, будівлі будуються миттєво, на головній є кнопка «До кінця сезону».</p></div>
+        <div style="padding:10px 14px 0"><p class="sub" style="margin:0">Лише для проб. Годинник гри можна перемотати вперед: на головній «Зіграти матч миттєво» й «До кінця сезону», тут — «До наступної події» (матч чи північ). Команда щодня тренується сама, будівлі будуються миттєво, матч наживо можна прискорити. У справжній грі нічого з цього немає — вона живе за годинником.</p></div>
         <div class="testrow">
           <button class="btn ghost sm" id="testOn">Увімкнути</button>
           <button class="btn ghost sm" id="testWin">Завжди перемагати: ні</button>
           <button class="btn ghost sm" id="testMoney">+5 млн на рахунок</button>
+          <button class="btn ghost sm" id="testNext" hidden>⏩ До наступної події</button>
         </div>
       </div>
     </section>
@@ -871,7 +873,7 @@ tr.po td:first-child{box-shadow:inset 2px 0 0 var(--gold)}
    гра тоді зависає на заставці. Якщо через 3,5 с код не піднявся — прибираємо
    воркер і кеші й перезавантажуємось рівно один раз за сеанс. */
 setTimeout(async () => {
-  if (window.VERT && window.nextRound) return;
+  if (window.VERT && window.clockTick) return;
   if (sessionStorage.getItem("vertHeal")) return;
   sessionStorage.setItem("vertHeal", "1");
   try {

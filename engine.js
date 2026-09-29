@@ -70,7 +70,8 @@ function fam(p, slot){
 let K=40, STEP_P=.712, CONV=.0728, FOUL_BASE=.50,
     CORNER_P=.30, CORNER_CONV=.095, FK_P=.10, FK_CONV=.19,
     PEN_P=.016, PEN_CONV=.76, INJ_BASE=.0069, HOME_BASE=.045, HOME_STAND=.034,
-    YEL_BAND=.225, RED_P=.0012, AI_FRESH=.80;
+    YEL_BAND=.225, RED_P=.0012;
+let AI_FRESH=1;   // свіжість основи ШІ перед матчем — гра ставить її за календарем (setAiFresh)
 
 /* ---------- травми за видами (рішення 29.09; 1 день гри ≈ 12 днів життя) ----------
    [назва, частка, від, до] днів; медцентр рівня M скорочує строк на 3 % × M. */
@@ -298,7 +299,7 @@ class Team{
   all(){return [this.gk,...SLOTS.slice(1).map(s=>this.xi[s]),...this.bench]}
   onPitch(){return [this.gk,...SLOTS.slice(1).map(s=>this.xi[s])]}
   /* свіжість: твоя команда несе втому з дня на день; суперник-ШІ робить ротацію сам —
-     його основа виходить у середньому на AI_FRESH (як у людини, що робить ротацію, прогін fatigue.js) */
+     його основа виходить на AI_FRESH: звичайно 100 %, після подвійної суботи менше (рішення 30.09) */
   reset(){const keep=this.human;this.onPitch().forEach(p=>p.reset(keep));this.bench.forEach(p=>p.reset(keep));
     if(!keep) this.onPitch().forEach(p=>{p.fresh=AI_FRESH});
     this.goals=0;this.shots=0;this.attacks=0;this.yellows=0;this.reds=0;
@@ -424,7 +425,10 @@ function quickMatch(hm,aw){
   hm.reset();aw.reset();hm.home=true;aw.home=false;
   const [hmid]=hm.zMid(),[amid]=aw.zMid();
   const ph=hmid/(hmid+amid), N=ri(64,76);
-  for(let i=0;i<N;i++){ if(i%6===0){hm.tire(90/N*6);aw.tire(90/N*6)} episode(hm,aw,ph); }
+  for(let i=0;i<N;i++){ if(i%6===0){hm.tire(90/N*6);aw.tire(90/N*6)}
+    /* перерва — як у матчі наживо: +7 % свіжості, щоб автопілот утомлював так само */
+    if(i===Math.round(N/2)) [hm,aw].forEach(t=>t.onPitch().forEach(p=>p.fresh=Math.min(1,p.fresh+.07)));
+    episode(hm,aw,ph); }
   return [hm.goals,aw.goals];
 }
 
@@ -553,5 +557,5 @@ window.VERT = {
   episode, quickMatch, makeFixtures, duel, uname, CLUBS,
   wageOf, wageFor, valueOf, divisionIncome, baseIncome, devIncome, need, levelOf, strengthAt, ceilLevel, signTier, stadiumFor,
   ticketsSeason, sponsorSeason, placePrize, upkeepSeason, wageCap, buildCost, buildHours, transferCommission, CONTRACT_K,
-  typicalTotal, tickets, sponsor, merch, matchPay, prizeAt8, seats, fans, INJURIES, rollInjury, AI_FRESH,
+  typicalTotal, tickets, sponsor, merch, matchPay, prizeAt8, seats, fans, INJURIES, rollInjury, get AI_FRESH(){return AI_FRESH}, setAiFresh(v){AI_FRESH=v},
 };

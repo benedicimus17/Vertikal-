@@ -8,9 +8,9 @@ const $$ = s => [...document.querySelectorAll(s)];
 const fmt = n => Math.round(n).toLocaleString("uk-UA").replace(/,/g, " ");
 /* vert6: новий розподіл доходу, зарплати, піраміда. Старі збереження лишаються в пам'яті
    телефону, але новій версії не підходять — клуб створюється заново. */
-const SAVE_KEY = "vert7";
+const SAVE_KEY = "vert8";
 /* номер версії видно внизу меню — щоб на телефоні одразу було ясно, що відкрилось */
-const VERSION = "v20";
+const VERSION = "v21";
 
 /* =======================================================================
    ЕМБЛЕМИ І ФОРМИ (малюються кодом, у кожного клуба свої)
@@ -65,6 +65,9 @@ const CREST_COUNT = 20, KIT_COUNT = 8;
 const S = {
   club: { name: "", crest: 0, kit: 0 },
   division: 12, season: 1, round: 1,
+  month: { y: 2026, m: 9 }, day: 1,   // сезон = календарний місяць (час гри — Іспанія), день місяця
+  clock: { last: 0 },            // до якої миті годинник гри вже все прорахував (матчі, кінці днів)
+  lastRep: "",                   // звіт останнього матчу — відкривається з головної
   money: 1250000, gold: 100, focus: 0,
   table: {}, results: [], feed: [],
   buildings: { stadium: 3, training: 2, academy: 1, scouts: 1, medical: 1, commercial: 1 },
@@ -72,7 +75,7 @@ const S = {
   owned: { crests: [], kits: [] },
   academy: { candidates: [], offers: [] },   // вихованці { p } (готовність p.rd 0–60, картки p.cd, здібності p.abl/p.abp) і набір сезону від скаута
   trained: "",                   // "сезон-тур", коли востаннє проведено тренування
-  test: { on: false, win: false },   // режим перевірки: миттєві матчі й будівлі
+  test: { on: false, win: false, shift: 0 },   // режим перевірки: миттєві матчі й будівлі, перемотка годинника (shift, мс)
   fin: { tickets: 0, sponsor: 0, merch: 0, match: 0, prize: 0, sales: 0, wages: 0, upkeep: 0, build: 0, buys: 0 },  // гроші за сезон
   scout: { left: 10 },           // { left } — звіти скаута: 10 на старті, далі щодня від скаутського центру
   scouted: null,                 // { season, map: ім'я → що відкрив скаут } — щоб перезапуск не стирав
@@ -132,6 +135,7 @@ function buildWorld(keepMe){
   LEAGUE.forEach(t => { if (!S.table[t.name]) S.table[t.name] = { p:0, w:0, d:0, l:0, gf:0, ga:0 } });
   Object.keys(S.table).forEach(n => { if (!LEAGUE.some(t => t.name === n)) delete S.table[n] });
   S.fixtures = V.makeFixtures(LEAGUE.map(t => t.name));
+  swapFixtures();
 }
 const teamBy = n => LEAGUE.find(t => t.name === n);
 function myFixture(){
@@ -146,11 +150,74 @@ function sortedTable(){
 const tablePos = name => sortedTable().findIndex(r => r.n === name) + 1;
 const ord = n => n + " місце";
 
-/* дата матчу: сезон = 35 днів, тур на день */
-function matchDate(){
-  const d = new Date(2026, 8, 14);
-  d.setDate(d.getDate() + (S.season - 1) * 35 + (S.round - 1));
-  return d.toLocaleDateString("uk-UA", { weekday: "short", day: "numeric", month: "long" });
+/* =======================================================================
+   КАЛЕНДАР І ГОДИННИК (ОСНОВА §14, рішення 29–30.09)
+   Сезон = календарний місяць за європейським часом (Іспанія). На телефоні кожен бачить свій місцевий час. 30 турів; де днів не вистачає — подвійні
+   тури в суботи. Останній день місяця — без ліги (продажі, контракти, плей-оф), опівночі — новий сезон.
+   Гра живе за годинником: матч починається сам о своїй годині, година щодня випадкова.
+   ======================================================================= */
+const TZ = "Europe/Madrid";                  // час гри — європейський (Іспанія), рішення 30.09
+const KFMT = new Intl.DateTimeFormat("en-GB", { timeZone: TZ, year: "numeric", month: "numeric", day: "numeric", hour: "numeric", minute: "numeric", hourCycle: "h23" });
+function gz(ts){
+  const o = {}; KFMT.formatToParts(ts).forEach(p => { o[p.type] = +p.value });
+  return { y: o.year, m: o.month - 1, d: o.day, h: o.hour % 24, mi: o.minute };
+}
+/* час гри → мітка часу (враховує літній і зимовий час) */
+function gzTs(y, m, d, h = 0, mi = 0){
+  const want = Date.UTC(y, m, d, h, mi);
+  let t = want;
+  for (let i = 0; i < 3; i++){ const k = gz(t); t += want - Date.UTC(k.y, k.m, k.d, k.h, k.mi) }
+  return t;
+}
+/* годинник гри; у режимі перевірки його можна перемотати вперед (S.test.shift), у справжній грі — ні */
+/* місцевий час телефону — лише для показу годин людині */
+function loc(ts){ const d = new Date(ts); return { y: d.getFullYear(), m: d.getMonth(), d: d.getDate(), h: d.getHours(), mi: d.getMinutes() } }
+const nowTs = () => Date.now() + (S.test.shift || 0);
+const monthDays = (y, m) => new Date(Date.UTC(y, m + 1, 0)).getUTCDate();
+const nextMonth = ({ y, m }) => m === 11 ? { y: y + 1, m: 0 } : { y, m: m + 1 };
+const curDays = () => monthDays(S.month.y, S.month.m);
+const dayK = () => 30 / curDays();            // ріст за день: за будь-який місяць гравець виростає однаково
+/* години матчів — окремий генератор, щоб не збивати випадковість матчу й ринку */
+function hash32(str){ let h = 2166136261; for (const c of str){ h ^= c.charCodeAt(0); h = Math.imul(h, 16777619) } return h >>> 0 }
+const pickSlot = (key, from, count) => from + 10 * (hash32(key) % count);   // хвилини від півночі, крок 10 хв
+const EP_MS = 4300, HALF_MS = 3200;
+const MATCH_LEN = 76 * EP_MS + HALF_MS + 5000;   // найдовший матч наживо ≈ 5,6 хв
+const PLAN_CACHE = {};
+function monthPlan(mo){
+  const key = `${mo.y}-${mo.m}-${S.division}`;
+  if (PLAN_CACHE[key]) return PLAN_CACHE[key];
+  const days = monthDays(mo.y, mo.m), league = days - 1, doubles = 30 - league;
+  const sats = [];
+  for (let d = 1; d <= league; d++) if (new Date(Date.UTC(mo.y, mo.m, d)).getUTCDay() === 6) sats.push(d);
+  const dbl = [...Array(Math.max(0, doubles)).keys()].map(i => sats[Math.floor((i + .5) * sats.length / doubles)]);
+  const ev = []; let r = 1;
+  for (let d = 1; d <= days; d++){
+    const k = `${key}-${d}`;
+    if (d <= league){
+      if (dbl.includes(d)){
+        ev.push({ t: "m", r: r++, ts: gzTs(mo.y, mo.m, d, 0, pickSlot(k + "a", 600, 30)) });   // удень 10:00–14:50
+        ev.push({ t: "m", r: r++, ts: gzTs(mo.y, mo.m, d, 0, pickSlot(k + "b", 1080, 19)) });  // увечері 18:00–21:00
+      } else ev.push({ t: "m", r: r++, ts: gzTs(mo.y, mo.m, d, 0, pickSlot(k, 1080, 19)) });  // 18:00–21:00
+    }
+    ev.push({ t: "d", d, last: d === days, ts: gzTs(mo.y, mo.m, d + 1, 0, 0) });            // опівночі — кінець дня
+  }
+  return PLAN_CACHE[key] = { days, dbl, ev };
+}
+const nextEvent = () => monthPlan(S.month).ev.find(e => e.ts > S.clock.last);
+const matchEvent = r => monthPlan(S.month).ev.find(e => e.t === "m" && e.r === r);
+const MONTHS = ["січня","лютого","березня","квітня","травня","червня","липня","серпня","вересня","жовтня","листопада","грудня"];
+const MONTHS1 = ["січень","лютий","березень","квітень","травень","червень","липень","серпень","вересень","жовтень","листопад","грудень"];
+const WDAYS = ["нд","пн","вт","ср","чт","пт","сб"];
+const hhmm = k => `${String(k.h).padStart(2, "0")}:${String(k.mi).padStart(2, "0")}`;
+function dayLabel(ts){
+  const k = loc(ts), n = loc(nowTs());
+  const wd = WDAYS[new Date(Date.UTC(k.y, k.m, k.d)).getUTCDay()];
+  const rel = k.y === n.y && k.m === n.m && k.d === n.d ? "сьогодні" : Date.UTC(k.y, k.m, k.d) - Date.UTC(n.y, n.m, n.d) === 864e5 ? "завтра" : "";
+  return `${rel ? rel + ", " : ""}${wd}, ${k.d} ${MONTHS[k.m]}`;
+}
+function untilText(ms){
+  const m = Math.max(0, Math.ceil(ms / 60000)), h = Math.floor(m / 60);
+  return h ? `через ${h} год ${m % 60} хв` : m ? `через ${m} хв` : "за хвилину";
 }
 
 /* =======================================================================
@@ -194,7 +261,7 @@ function show(p){
   if (p === "shop")   renderShop();
   if (p === "world")  renderWorld();
   if (p === "settings") renderSettings();
-  if (p === "match"){ if (!M.hm) openMatch(); else ensurePitchLoop() }
+  if (p === "match"){ if (!M.hm || (M.done && !M.live)) openMatch(); else ensurePitchLoop() }
 }
 /* свайпи між розділами.
    Напрям жесту фіксується один раз, одразу як рух стає помітним (перші ~12 px),
@@ -243,7 +310,7 @@ document.addEventListener("touchend", e => {
 function renderTop(){
   $("#topCrest").innerHTML = crestSVG(S.club.crest);
   $("#topName").textContent = S.club.name;
-  $("#topSub").textContent = `Дивізіон ${S.division} · Сезон ${S.season} · Тур ${S.round}${S.test.on ? " · перевірка" : ""}`;
+  $("#topSub").textContent = `Дивізіон ${S.division} · Сезон ${S.season} · Тур ${Math.min(S.round, 30)} · ${hhmm(loc(nowTs()))}${S.test.on ? " · перевірка" : ""}`;
   $("#resMoney").textContent = fmt(S.money);
   $("#resGold").textContent = S.gold;
   const unread = S.feed.filter(f => !f.seen).length;
@@ -263,29 +330,56 @@ const NEWS_ICON = {
   inj:  '<rect x="4" y="4" width="16" height="16" rx="3"/><path d="M12 8v8M8 12h8"/>',
 };
 function renderHome(){
-  const f = myFixture(), opp = f.isHome ? f.away : f.home;
-  $("#homeTag").textContent = `Дивізіон ${S.division} · Сезон ${S.season} · Тур ${S.round}`;
+  const done = S.round > 30, f = myFixture(), opp = f.isHome ? f.away : f.home;
+  $("#homeTag").textContent = `Дивізіон ${S.division} · Сезон ${S.season} (${MONTHS1[S.month.m]}) · ${done ? "усі тури зіграно" : `тур ${S.round} з 30`}`;
   $("#homeTitle").textContent = S.club.name;
-  $("#homeLine").textContent = `${ord(tablePos(ME.name))} у таблиці. Наступний суперник — ${opp.name}, ${f.isHome ? "удома" : "у гостях"}. Склад оцінюється в ${f1(ME.rate())} за силою в ролі. ${trainedToday() ? "Сьогодні вже тренувались." : "Сьогодні ще не тренувались — тренування в розділі «Тренування»."}${expiringText()}`;
-  $("#nmRound").textContent = `Тур ${S.round}`;
-  $("#nmCrestH").innerHTML = crestSVG(f.home.crest ?? 0);
-  $("#nmCrestA").innerHTML = crestSVG(f.away.crest ?? 0);
-  $("#nmHome").textContent = f.home.name;  $("#nmHomePos").textContent = ord(tablePos(f.home.name));
-  $("#nmAway").textContent = f.away.name;  $("#nmAwayPos").textContent = ord(tablePos(f.away.name));
-  $("#nmDate").textContent = matchDate();
-  $("#nmTime").textContent = "19:30";
-  $("#nmVenue").textContent = f.isHome ? `Стадіон «${S.club.name}» · рівень ${S.buildings.stadium}` : `Виїзд · ${opp.name}`;
+  $("#homeLine").textContent = done
+    ? `${ord(tablePos(ME.name))} у таблиці. Усі 30 турів зіграно. Сьогодні останній день сезону: продажі, купівлі й продовження контрактів. Опівночі — підсумок і новий сезон.${expiringText()}`
+    : `${ord(tablePos(ME.name))} у таблиці. Наступний суперник — ${opp.name}, ${f.isHome ? "удома" : "у гостях"}. Склад оцінюється в ${f1(ME.rate())} за силою в ролі. ${trainedToday() ? "Сьогодні вже тренувались." : "Сьогодні ще не тренувались — тренування в розділі «Тренування»."}${expiringText()}`;
+  $("#nmCrestH").innerHTML = done ? "" : crestSVG(f.home.crest ?? 0);
+  $("#nmCrestA").innerHTML = done ? "" : crestSVG(f.away.crest ?? 0);
+  $("#nmHome").textContent = done ? "—" : f.home.name;  $("#nmHomePos").textContent = done ? "" : ord(tablePos(f.home.name));
+  $("#nmAway").textContent = done ? "—" : f.away.name;  $("#nmAwayPos").textContent = done ? "" : ord(tablePos(f.away.name));
+  $("#nmVenue").textContent = done ? "суперники нового сезону — після переходу" : f.isHome ? `Стадіон «${S.club.name}» · рівень ${S.buildings.stadium}` : `Виїзд · ${opp.name}`;
   $("#newsList").innerHTML = S.feed.slice(0, 6).map(n =>
     `<div class="row"><div class="thumb"><svg viewBox="0 0 24 24">${NEWS_ICON[n.i] || NEWS_ICON.cap}</svg></div>
      <div><b>${n.b}</b><i>${n.t}</i></div></div>`).join("")
     || `<div class="row"><div><b>Новин поки немає</b><i>з'являться після першого туру</i></div></div>`;
   S.feed.forEach(n => n.seen = true);
-  $("#homePlay").textContent = S.test.on ? "Зіграти день миттєво" : "Грати матч";
-  $("#homeSeason").style.display = S.test.on ? "" : "none";
+  $("#homeSeason").style.display = S.test.on && !done ? "" : "none";
+  $("#homeLast").hidden = !S.lastRep;
   homeRewardBlock();
+  homeClock();
   renderTop();
 }
-$("#homePlay").onclick  = () => S.test.on ? playInstant() : show("match");
+/* наступний матч і скільки до нього — оновлюється щосекунди */
+function homeClock(){
+  const now = nowTs();
+  if (M.live){
+    $("#nmRound").textContent = `Наживо · ${M.min}'`;
+    $("#nmDate").textContent = "матч іде зараз";
+    $("#nmTime").textContent = `рахунок ${M.hm.goals} : ${M.aw.goals}`;
+    $("#homePlay").textContent = "Матч наживо";
+  } else if (S.round > 30){
+    const n = nextMonth(S.month), ev = monthPlan(S.month).ev;
+    $("#nmRound").textContent = "Сезон зіграно";
+    $("#nmDate").textContent = `новий сезон — 1 ${MONTHS[n.m]}`;
+    $("#nmTime").textContent = `перехід опівночі · ${untilText(ev[ev.length - 1].ts - now)}`;
+    $("#homePlay").textContent = S.test.on ? "Перейти в новий сезон" : "Склад";
+  } else {
+    const e = matchEvent(S.round), dbl = monthPlan(S.month).dbl.includes(gz(e.ts).d);
+    $("#nmRound").textContent = `Ліга · тур ${S.round}${dbl ? " · подвійний тур" : ""}`;
+    $("#nmDate").textContent = dayLabel(e.ts);
+    $("#nmTime").textContent = `${hhmm(loc(e.ts))} · ${untilText(e.ts - now)}`;
+    $("#homePlay").textContent = S.test.on ? "Зіграти матч миттєво" : "Підготовка до матчу";
+  }
+}
+$("#homePlay").onclick = () => {
+  if (M.live) return show("match");
+  if (S.round > 30) return S.test.on ? simSeason() : show("team");
+  S.test.on ? playInstant() : show("match");
+};
+$("#homeLast").onclick = () => showReport();
 $("#homeSeason").onclick = () => simSeason();
 $("#homeSquad").onclick = () => show("team");
 $("#btnMail").onclick   = () => show("home");
@@ -307,7 +401,7 @@ const dayW = n => pl(n, "день", "дні", "днів");
 const yrs = n => { const a = n % 10, b = n % 100;
   return a === 1 && b !== 11 ? "рік" : a >= 2 && a <= 4 && (b < 12 || b > 14) ? "роки" : "років" };
 /* вік усередині сезону: з кожним туром гравець трохи старший — лінія росту рухається плавно */
-const ageF = p => p.age + (S.round - 1) / 30;
+const ageF = p => p.age + (S.day - 1) / curDays();
 /* позиція з флангом: «КЗ п» — правий, «ВНГ л» — лівий */
 const posLbl = p => p.pos() + (p.side ? (p.side === "R" ? " п" : " л") : "");
 /* як гравець знає місце в складі, у відсотках (100 — своя позиція) */
@@ -392,7 +486,7 @@ function renderTrain(){
    Матч додає трохи тим, хто грав. Ніхто не росте вище своєї лінії віку.
    ======================================================================= */
 const matchBoost = p => ageF(p) < 20 ? 3 : 1;      // молоді ростуть від матчів утричі швидше
-const trainedToday = () => S.trained === `${S.season}-${S.round}`;
+const trainedToday = () => S.trained === String(dayNo());
 function squadAll(){ return [ME.gk, ...Object.values(ME.xi), ...ME.bench] }
 function trainToday(quiet){
   if (trainedToday()) return;
@@ -400,12 +494,13 @@ function trainToday(quiet){
   const gains = [];
   squadAll().forEach(p => {
     if (p.out > 0) return;                       // травмований не тренується
-    const g = p.grow(p.slopeDay(ageF(p)) * k, ageF(p), S.focus);
+    p.fresh = Math.max(0, p.fresh - FRESH_TRAIN);
+    const g = p.grow(p.slopeDay(ageF(p)) * k * dayK(), ageF(p), S.focus);
     p._tg = (p._tg || 0) + g; gains.push([p, g]);
   });
   /* академія тренується разом із клубом, на тій самій базі */
-  S.academy.candidates.forEach(c => { c.p.grow(c.p.slopeDay(ageF(c.p)) * k, ageF(c.p), S.focus); c.p.rd = Math.min(60, (c.p.rd || 0) + 1) });
-  S.trained = `${S.season}-${S.round}`;
+  S.academy.candidates.forEach(c => { c.p.grow(c.p.slopeDay(ageF(c.p)) * k * dayK(), ageF(c.p), S.focus); c.p.rd = Math.min(60, (c.p.rd || 0) + 1) });
+  S.trained = String(dayNo());
   if (quiet) return;
   const total = gains.reduce((s, [, g]) => s + g, 0);
   const top = gains.filter(([, g]) => g > 0.004).sort((a, b) => b[1] - a[1]).slice(0, 5);
@@ -502,7 +597,8 @@ function setMorale(){
   const xi = ME.onPitch();
   ME.morale = xi.reduce((a, p) => a + ((p.mr ?? 70) - 70) / 30 * .03, 0) / xi.length;
 }
-const dayNo = () => S.season * 100 + S.round;
+/* номер дня гри (за календарем) — для «сьогодні вже тренувались», аптечок і підтвердженого складу */
+const dayNo = () => Math.floor(Date.UTC(S.month.y, S.month.m, S.day) / 864e5);
 const canPlay = p => p && !(p.out > 0) && !(p.ban > 0);
 const fitNow = (p, slot) => p.fitIn(slot) * (.7 + .3 * p.fresh);
 /* борг за обіцянкою: скільки матчів не догравав проти обіцяного цього сезону; 3 очка за матч боргу, не більше 4 матчів */
@@ -782,7 +878,7 @@ $$("#leagueTabs button").forEach(b => b.onclick = () => {
 });
 function renderLeague(){
   const z = zones(S.division);
-  $("#leagueSub").textContent = `Дивізіон ${S.division} · тур ${S.round} з 30 · ${S.division <= 4 ? (z.up ? "3 перші вгору" : "вища ліга") : "чемпіон угору, 2-ге місце — плей-оф у неділю"} · ${z.down ? `${z.down} останні вилітають` : "нижче нікуди — це дно"}`;
+  $("#leagueSub").textContent = `Дивізіон ${S.division} · тур ${S.round} з 30 · ${S.division <= 4 ? (z.up ? "3 перші вгору" : "вища ліга") : "чемпіон угору, 2-ге місце — плей-оф в останній день місяця"} · ${z.down ? `${z.down} останні вилітають` : "нижче нікуди — це дно"}`;
   const box = $("#leagueBody");
   if (leagueView === "table"){
     box.innerHTML = `<table><thead><tr><th class="l">#</th><th class="l">Клуб</th><th>І</th><th>В</th><th>Н</th><th>П</th><th>М</th><th>О</th></tr></thead><tbody>${
@@ -836,7 +932,8 @@ function stadiumLine(){
 }
 /* травма минає за тур із таким шансом — медцентр прискорює */
 /* свіжість за день і аптечки (рішення 29.09, прогони fatigue.js і greens.js) */
-const FRESH_DAY = .20;
+const FRESH_DAY = .28;                                  // за ніч (рішення 30.09): звичайний день — знову 100 %
+const FRESH_TRAIN = .03;                                // тренування трохи втомлює
 const GREEN = .15, GREEN_DAY = 4;                     // зелена: +15 % одному гравцю, не більше 4 на день на команду
 const kitCap = () => ({ g: 10 + S.buildings.medical, r: 5 + Math.floor(S.buildings.medical / 2) });   // скільки вміщує медцентр
 
@@ -1695,7 +1792,9 @@ function renderSettings(){
     openSheet();
     $("#doReset").onclick = () => { localStorage.removeItem(SAVE_KEY); location.reload() };
   };
-  $("#testState").textContent = S.test.on ? "увімкнено" : "вимкнено";
+  $("#testState").textContent = S.test.on ? `увімкнено · час гри: ${dayLabel(nowTs())}, ${hhmm(loc(nowTs()))}` : "вимкнено";
+  $("#testNext").hidden = !S.test.on;
+  $("#testNext").onclick = () => { testNext(); renderSettings() };
   $("#testOn").textContent = S.test.on ? "Вимкнути" : "Увімкнути";
   $("#testWin").textContent = `Завжди перемагати: ${S.test.win ? "так" : "ні"}`;
   $("#testOn").onclick = () => { S.test.on = !S.test.on; if (S.test.on) finishQueueNow(); renderSettings(); renderTop(); save() };
@@ -1725,7 +1824,7 @@ function openMatch(){
   M.hm = f.home; M.aw = f.away; M.hm.home = true; M.aw.home = false;
   ME.crowd = M.hm === ME ? crowdNow() : 1;
   ensureRoles();
-  if (M.day !== dayNo()){ M.day = dayNo(); autoLineup() }   // раз на день, перед матчем
+  if (M.day !== `${S.season}-${S.round}`){ M.day = `${S.season}-${S.round}`; autoLineup() }   // перед кожним матчем (і другим у суботу)
   M.hm.reset(); M.aw.reset(); setMorale();
   M.live = false; M.min = 0; M.ep = 0; M.half = 1; M.over = false; M.forced = false; M.N = V.ri(64, 76);
   const [a] = M.hm.zMid(), [b] = M.aw.zMid(); M.ph = a / (a + b);
@@ -1733,7 +1832,11 @@ function openMatch(){
   $("#mgh").textContent = 0; $("#mga").textContent = 0;
   $("#mclock").className = "clock paused"; $("#mclock").textContent = "до стартового свистка";
   $("#comm").innerHTML = "";
-  $("#startBtn").textContent = "Стартовий свисток"; $("#startBtn").style.display = "";
+  M.done = false; M.auto = false; M.ev = null;
+  const e = matchEvent(S.round);
+  if (e) $("#mclock").textContent = `${dayLabel(e.ts)}, ${hhmm(loc(e.ts))}`;
+  $("#startBtn").textContent = e ? `Матч почнеться сам о ${hhmm(loc(e.ts))}` : "Сезон зіграно";
+  $("#startBtn").style.display = "";
   ME.press = 1; ME.line = 1; ME.presence = 0; ME.actions = 0;
   M.played = new Set(ME.onPitch());          // хто вийшов на поле — тому матч додає трохи росту
   initDots(); BALL.x = BALL.tx = .5; BALL.y = BALL.ty = .5;
@@ -1745,6 +1848,7 @@ function renderSpeed(){
   $("#spd").innerHTML = [["×1 · 5 хв",1],["×2",2],["×4",4],["×10",10]].map(([n, v]) =>
     `<button class="${M.speed === v ? "on" : ""}" data-s="${v}">${n}</button>`).join("");
   $$("#spd button").forEach(b => b.onclick = () => { M.speed = +b.dataset.s; renderSpeed() });
+  $("#spd").parentElement.style.display = S.test.on ? "" : "none";   // у справжній грі швидкість одна для обох
 }
 function renderCtrl(){
   $("#pressCtrl").innerHTML = PRESS.map(([n, v]) => `<button class="${ME.press === v ? "on" : ""}" data-v="${v}">${n}</button>`).join("");
@@ -1967,34 +2071,55 @@ function pitchFrame(){
 }
 function ensurePitchLoop(){ if (pitchRAF === null) pitchRAF = requestAnimationFrame(pitchFrame) }
 
-/* ---- цикл матчу ---- */
+/* ---- цикл матчу: іде за годинником, однаково для обох суперників (рішення 30.09) ----
+   Хто зайшов посеред матчу, потрапляє на поточну хвилину: попередні вже зіграні й видні в стрічці. */
 $("#startBtn").onclick = () => {
-  if (M.over){ nextRound(); return }
-  if (M.live) return;
-  M.live = true; $("#startBtn").style.display = "none";
-  markLineup();                                      // менеджер сам вивів цей склад
-  setMorale();
-  M.played = new Set(ME.onPitch());                  // склад міг змінитись у підготовці
-  renderMatchPrep();
-  keepAwake(true);
-  say(0, `Стартовий свисток. ${M.hm.name} — ${M.aw.name}.`, "big");
-  loop();
+  if (M.over && S.lastRep) return showReport();
+  const e = matchEvent(S.round);
+  if (e && !M.live) toast(`Матч почнеться сам: ${dayLabel(e.ts)}, ${hhmm(loc(e.ts))}`);
 };
-function loop(){
-  M.timer = setTimeout(() => { const paused = step(); if (!M.over && !paused) loop() }, 4300 / M.speed);
+const spd = () => S.test.on ? M.speed : 1;            // прискорення — лише в режимі перевірки
+const matchSeed = r => hash32(`${S.club.name}-${S.season}-${r}`);   // той самий хід матчу, хоч коли зайти
+/* свіжість основи суперника-ШІ перед матчем: він теж ротує, але подвійна субота втомлює й його */
+function aiFreshFor(e){
+  const ms = monthPlan(S.month).ev.filter(x => x.t === "m"), i = ms.indexOf(e);
+  const sameDay = (a, b) => a && b && gz(a.ts).d === gz(b.ts).d;
+  if (sameDay(ms[i - 1], e)) return .75;
+  if (i >= 2 && sameDay(ms[i - 2], ms[i - 1])) return .85;
+  return 1;
+}
+function kickoff(e){
+  V.setAiFresh(aiFreshFor(e));
+  V.reseed(matchSeed(e.r));
+  M.day = null; openMatch();                          // склад перед свистком: автовибір (підтверджений не чіпає)
+  M.live = true; M.ev = e; M.nextAt = e.ts + EP_MS / spd(); M.h2 = false;
+  $("#startBtn").style.display = "none";
+  setMorale();
+  M.played = new Set(ME.onPitch());
+  renderMatchPrep();
+  if (page === "match") keepAwake(true);
+  say(0, `Стартовий свисток. ${M.hm.name} — ${M.aw.name}.`, "big");
+}
+/* доганяє матч до теперішньої миті: кожен епізод — 4,3 с, перерва — 3,2 с */
+function liveDrive(now){
+  let guard = 0;
+  while (M.live && !M.over && now >= M.nextAt && guard++ < 200){
+    const paused = step();
+    M.nextAt += (paused ? HALF_MS : EP_MS) / spd();
+  }
 }
 function step(){
   M.ep++;
   M.min = Math.min(90, Math.round(M.ep * 90 / M.N));
   if (M.half === 1 && M.min >= 45){
-    M.half = 2; M.min = 45; M.ep--; clearTimeout(M.timer);
+    M.half = 2; M.min = 45; M.ep--;
     $("#mclock").className = "clock paused"; $("#mclock").textContent = "перерва";
     say(45, `Перерва. ${M.hm.goals} : ${M.aw.goals}`, "big");
     M.hm.onPitch().forEach(p => p.fresh = Math.min(1, p.fresh + .07));
     M.aw.onPitch().forEach(p => p.fresh = Math.min(1, p.fresh + .07));
-    setTimeout(() => { say(46, "Другий тайм почався."); loop() }, 3200);
     return true;
   }
+  if (M.half === 2 && !M.h2){ M.h2 = true; say(46, "Другий тайм почався.") }
   if (M.ep % 6 === 0){ M.hm.tire(90 / M.N * 6); M.aw.tire(90 / M.N * 6) }
   let shown = false;
   V.episode(M.hm, M.aw, M.ph).forEach(e => {
@@ -2014,13 +2139,14 @@ function step(){
   if (M.ep >= M.N) finish();
 }
 function finish(){
-  M.over = true; M.live = false; clearTimeout(M.timer);
+  M.over = true; M.live = false;
   keepAwake(false);
   $("#mclock").className = "clock paused"; $("#mclock").textContent = "фінальний свисток";
   say(90, `Фінальний свисток. ${M.hm.name} ${M.hm.goals} : ${M.aw.goals} ${M.aw.name}`, "big");
   settleRound();
+  roundDone(M.ev);
+  renderTop(); if (page === "home") renderHome(); save();
   setTimeout(showReport, 900);
-  renderTop(); save();
 }
 /* Підсумок туру: мій результат, решта матчів туру, приріст від матчу, призові. */
 function settleRound(){
@@ -2054,14 +2180,15 @@ function settleRound(){
   moraleAfterMatch(diff);
   addNews(diff > 0 ? "up" : "goal",
     `${diff > 0 ? "Перемога" : diff === 0 ? "Нічия" : "Поразка"} ${M.hm.goals}:${M.aw.goals}${M.gate ? ` — квитки ${fmt(M.gate)}` : ""}`);
-  $("#startBtn").textContent = "Далі — наступний тур";
+  S.lastRep = reportHTML();
+  $("#startBtn").textContent = "Звіт матчу";
   $("#startBtn").style.display = "";
 }
-/* Режим перевірки: матч дня грається миттєво, одразу звіт. */
-function playInstant(quiet){
-  if (M.live) return;
-  if (!M.hm) openMatch();
-  if (M.over){ if (!quiet) showReport(); return }       // цей день уже зіграно
+/* Матч без менеджера (не зайшов у гру): автопілот — автовибір складу, без замін, дій і аптечок. */
+function autoMatch(e){
+  V.setAiFresh(aiFreshFor(e));
+  V.reseed(matchSeed(e.r));
+  M.day = null; openMatch();
   setMorale();
   V.quickMatch(M.hm, M.aw);
   M.forced = false;
@@ -2069,25 +2196,102 @@ function playInstant(quiet){
     const home = M.hm === ME, mine = home ? M.hm : M.aw, opp = home ? M.aw : M.hm;
     if (mine.goals <= opp.goals){ mine.goals = opp.goals + 1; M.forced = true }
   }
-  M.over = true; M.played = new Set(ME.onPitch());
+  M.over = true; M.ev = e; M.auto = true; M.played = new Set(ME.onPitch());
   $("#mgh").textContent = M.hm.goals; $("#mga").textContent = M.aw.goals;
-  $("#mclock").className = "clock paused"; $("#mclock").textContent = "зіграно миттєво";
+  $("#mclock").className = "clock paused"; $("#mclock").textContent = "зіграно без тебе";
   settleRound();
-  if (!quiet){ showReport(); renderTop() }
-  save();
+  roundDone(e);
 }
-/* Режим перевірки: догнати сезон до кінця — щодня тренування, матч, наступний день. */
-function simSeason(){
-  if (M.live) return;
-  const s0 = S.season;
-  let guard = 0;
-  while (S.season === s0 && guard++ < 40){
-    if (!trainedToday()) trainToday(true);
-    playInstant(true);
-    nextRound(true);
+/* Тур зіграно. Кінець дня — окремо, опівночі (dayEnd): у суботу два тури, а відпочинок один. */
+function roundDone(e){
+  if (e) S.clock.last = Math.max(S.clock.last, e.ts);
+  S.round++;
+  M.done = true;
+  /* за 5 турів до кінця сезону — нагадування, у кого закінчується контракт (ПЛАН 44) */
+  if (S.round === 26 && S.remind !== S.season){
+    S.remind = S.season;
+    const ex = squadAll().filter(lastYear);
+    if (ex.length) addNews("cap", `Контракт закінчується наприкінці сезону: ${ex.map(p => p.name).join(", ")}. Продовж у картці гравця, інакше вони підуть вільними агентами.`);
   }
-  openMatch(); renderTop(); show("home"); save();
-  seasonWindow();
+}
+/* Годинник гри: прораховує все, що вже настало, — матчі (наживо, якщо гра відкрита в їхній час,
+   інакше автопілот) і кінці днів. Кнопки «наступний тур» немає: гра живе сама 24/7. */
+let GAME_ON = false, lastSec = 0;
+function clockTick(){
+  if (!GAME_ON || !ME) return;
+  const now = nowTs();
+  if (M.live) liveDrive(now);
+  let autos = 0, rolled = false, changed = false, guard = 0;
+  while (!M.live && guard++ < 400){
+    const e = nextEvent();
+    if (!e || e.ts > now) break;
+    changed = true;
+    if (e.t === "m"){
+      if (e.r !== S.round){ S.clock.last = e.ts; continue }
+      if (now < e.ts + MATCH_LEN){ kickoff(e); liveDrive(now); continue }   // гра відкрита — матч наживо
+      autoMatch(e); autos++;
+    } else if (dayEnd(e)) rolled = true;
+  }
+  if (changed){
+    if (autos && !S.test.on) toast(`Поки тебе не було, зіграно ${autos} ${pl(autos, "матч", "матчі", "матчів")} — результати в новинах`);
+    renderTop(); if (page === "home") renderHome();
+    save();
+    if (rolled) seasonWindow();
+  }
+  const sec = Math.floor(now / 1000);
+  if (sec !== lastSec){ lastSec = sec; renderTop(); if (page === "home") homeClock() }
+}
+setInterval(clockTick, 250);
+window.clockTick = clockTick;
+/* ---- режим перевірки: перемотка годинника (у справжній грі її немає) ---- */
+function shiftTo(ts){ S.test.shift = (S.test.shift || 0) + Math.max(0, ts - nowTs()) }
+function playInstant(){
+  if (M.live){ shiftTo(M.ev.ts + MATCH_LEN); clockTick(); return }
+  const e = matchEvent(S.round);
+  if (!e) return toast("Сезон зіграно — перехід опівночі останнього дня");
+  shiftTo(e.ts + MATCH_LEN + 1000);
+  clockTick();
+  showReport();
+}
+function simSeason(){
+  const ev = monthPlan(S.month).ev;
+  shiftTo(ev[ev.length - 1].ts + 1000);
+  clockTick();
+  show("home");
+}
+function testNext(){
+  const e = nextEvent(); if (!e) return;
+  shiftTo(e.ts + 500);
+  clockTick();
+}
+window.playInstant = playInstant; window.simSeason = simSeason; window.testNext = testNext;
+/* Новий менеджер посеред місяця (рішення 30.09) отримує бот-команду з її місцем у таблиці — місця 10–16.
+   Тури, що вже минули, дограються без нього. Гроші, золото, аптечки й будівлі — стартові. */
+function joinMidSeason(){
+  const past = monthPlan(S.month).ev.filter(e => e.t === "m" && e.ts <= S.clock.last);
+  if (!past.length) return;
+  V.reseed(hash32(`${S.club.name}-join-${S.month.y}-${S.month.m}`));
+  past.forEach(e => S.fixtures[(e.r - 1) % S.fixtures.length].forEach(([h, a]) => {
+    const [gh, ga] = V.quickMatch(teamBy(h), teamBy(a)); regResult(h, a, gh, ga, false);
+  }));
+  squadAll().forEach(p => { p.reset(); p.out = 0; p.ban = 0; p.inj = null });
+  S.round = past.length + 1;
+  const rows = sortedTable(), pos = 10 + hash32(S.club.name) % 7, tgt = rows[pos - 1].n;
+  if (tgt !== ME.name){
+    S.join = { season: S.season, tgt };
+    const t = S.table[tgt]; S.table[tgt] = S.table[ME.name]; S.table[ME.name] = t;
+    const sw = n => n === tgt ? ME.name : n === ME.name ? tgt : n;
+    S.results = S.results.map(r => ({ ...r, h: sw(r.h), a: sw(r.a), me: false }));
+    swapFixtures();
+  }
+  const row = S.table[ME.name];
+  addNews("cap", `Ти прийняв клуб посеред сезону: ${pos} місце, ${row.p} ${pl(row.p, "очко", "очки", "очок")} після ${past.length} ${pl(past.length, "туру", "турів", "турів")}.`);
+}
+/* клуб, який прийняв новий менеджер, грає за розкладом того бота, чиє місце він зайняв */
+function swapFixtures(){
+  if (!S.join || S.join.season !== S.season) return;
+  const a = S.join.tgt, b = ME.name, sw = n => n === a ? b : n === b ? a : n;
+  S.fixtures = S.fixtures.map(rd => rd.map(([h, w]) => [sw(h), sw(w)]));
 }
 function regResult(h, a, gh, ga, me){
   const H = S.table[h], A = S.table[a];
@@ -2098,34 +2302,45 @@ function regResult(h, a, gh, ga, me){
 }
 /* гроші одного дня: квитки (удома), спонсор і атрибутика, зарплати, утримання */
 function dayMoney(){
-  return { sponsor: V.sponsor(S.division, S.buildings.commercial) / 30, merch: V.merch(S.division, S.buildings.commercial) / 30,
-           wages: ME.wageBill() / 30, upkeep: V.upkeepSeason(S.division, levelsSum()) / 30 };
+  const D = curDays();                 // сезонні суми діляться на дні місяця
+  return { sponsor: V.sponsor(S.division, S.buildings.commercial) / D, merch: V.merch(S.division, S.buildings.commercial) / D,
+           wages: ME.wageBill() / D, upkeep: V.upkeepSeason(S.division, levelsSum()) / D };
 }
 function showReport(){
+  if (!S.lastRep) return;
+  $("#sheet").innerHTML = S.lastRep;
+  openSheet();
+}
+window.showReport = showReport;
+function reportHTML(){
   const mine = ME.onPitch().slice(1).concat([ME.gk]);
   const best = [...mine].sort((a, b) => b.rating - a.rating).slice(0, 4);
   const scored = mine.filter(p => p.goals > 0);
+  const hurt = mine.filter(p => p.injured || p.red);
   const dm = dayMoney(), net = (M.gate || 0) + (M.pay || 0) + dm.sponsor + dm.merch - dm.wages - dm.upkeep;
-  $("#sheet").innerHTML = `<h2>${M.hm.goals} : ${M.aw.goals}</h2>
-    <div class="s">${M.hm.name} — ${M.aw.name} · тур ${S.round}</div>
+  const e = M.ev, when = e ? `${dayLabel(e.ts).replace(/^(сьогодні|завтра), /, "")}, ${hhmm(loc(e.ts))}` : "";
+  return `<h2>${M.hm.goals} : ${M.aw.goals}</h2>
+    <div class="s">${M.hm.name} — ${M.aw.name} · тур ${S.round}${when ? " · " + when : ""}${M.auto ? " · грав автопілот" : ""}</div>
     ${M.forced ? `<p style="font-size:11.5px;color:var(--dim);margin:0 0 8px">Режим перевірки: рахунок підправлено на перемогу.</p>` : ""}
     ${scored.length ? `<div class="lab">Голи</div><div class="plist">${scored.map(p =>
       `<div class="p"><div class="pos">${p.goals}</div><div class="pn"><b>${p.name}</b>
        <i>${p.assists ? p.assists + " гольова · " : ""}${p.touches} дотиків</i></div></div>`).join("")}</div>` : ""}
+    ${hurt.length ? `<div class="lab" style="margin-top:12px">Травми й вилучення</div><div class="plist">${hurt.map(p =>
+      `<div class="p"><div class="pos">${p.red ? "ЧК" : "+"}</div><div class="pn"><b>${p.name}</b>
+       <i>${p.red ? "червона — пропустить наступний матч" : p.inj ? `${p.inj}, не гратиме ${p.out} ${dayW(p.out)}` : "травма"}</i></div></div>`).join("")}</div>` : ""}
     <div class="lab" style="margin-top:12px">Найкращі в матчі</div>
     <div class="plist">${best.map(p => `<div class="p"><div class="pos">${p.rating.toFixed(1)}</div>
       <div class="pn"><b>${p.name}</b><i>${p.pos()} · свіжість ${Math.round(p.fresh * 100)} %${p.injured ? ' · <span style="color:var(--bad)">травма</span>' : ""}</i></div>
       <div class="pv"><b>${Math.round(p.power())}</b></div></div>`).join("")}</div>
     ${growthReport()}
-    <div class="lab" style="margin-top:12px">Гроші за день · разом ${net >= 0 ? "+" : "−"}${fmt(Math.abs(net))}</div>
-    <p style="font-size:11.5px;color:var(--dim);margin:0">за результат +${fmt(M.pay || 0)} · ${M.gate ? `квитки +${fmt(M.gate)} · ` : "матч на виїзді — квитків немає · "}спонсор +${fmt(dm.sponsor)} · атрибутика +${fmt(dm.merch)} · зарплати −${fmt(dm.wages)} · утримання будівель −${fmt(dm.upkeep)}</p>
+    <div class="lab" style="margin-top:12px">Гроші · разом за день ${net >= 0 ? "+" : "−"}${fmt(Math.abs(net))}</div>
+    <p style="font-size:11.5px;color:var(--dim);margin:0">за результат +${fmt(M.pay || 0)} · ${M.gate ? `квитки +${fmt(M.gate)} · ` : "матч на виїзді — квитків немає · "}спонсор +${fmt(dm.sponsor)} · атрибутика +${fmt(dm.merch)} · зарплати −${fmt(dm.wages)} · утримання будівель −${fmt(dm.upkeep)} (денні суми — опівночі)</p>
     ${stadiumLine()}
     <div class="note" style="margin-top:12px"><h3>Бонус присутності</h3>
       <p>Дій під час гри: ${ME.actions}. Команда грала з надбавкою
       <b style="color:var(--gold)">+${(ME.presence * 100).toFixed(1).replace(".", ",")} %</b> до ефективної сили.
       Стеля — 4 %, і вона рахується всередині загальної стелі бонусів 12 %.</p></div>
-    <button class="btn" style="margin-top:14px" onclick="closeSheet();nextRound()">Наступний тур</button>`;
-  openSheet(true);
+    <button class="btn" style="margin-top:14px" onclick="closeSheet()">Добре</button>`;
 }
 /* Приріст у звіті: від матчу — кожен, хто грав; тренування — окремим рядком. */
 function growthReport(){
@@ -2144,7 +2359,7 @@ function growthReport(){
 /* Суперники-ШІ теж тренуються щодня — на базі, типовій для свого дивізіону. */
 const aiBase = d => Math.max(1, Math.min(20, Math.round(V.need(d))));
 function aiDay(){
-  const k = V.kBase(aiBase(S.division));
+  const k = V.kBase(aiBase(S.division)) * dayK();
   LEAGUE.forEach(t => { if (t === ME) return;
     t.onPitch().forEach(p => p.grow(p.slopeDay(ageF(p)) * (k + V.MATCH_K * matchBoost(p)), ageF(p)));
     t.bench.forEach(p => p.grow(p.slopeDay(ageF(p)) * k, ageF(p)));
@@ -2256,8 +2471,8 @@ function zones(d){
   if (d <= 4) return { up: d > 1 ? 3 : 0, playoff: false, down: d === BOTTOM ? 0 : d <= 3 ? 3 : 4 };
   return { up: 1, playoff: true, down: d === BOTTOM ? 0 : 4 };
 }
-/* Плей-оф трьох других місць (неділя після 30-го туру): найкращий другий за очками чекає у фіналі,
-   двоє інших грають півфінал о 18:00, фінал — о 21:00 на полі найкращого. Нічия — серія пенальті. */
+/* Плей-оф трьох других місць (останній день місяця, увечері): найкращий другий за очками чекає у фіналі,
+   двоє інших грають півфінал, потім фінал на полі найкращого. Нічия — серія пенальті. */
 function playoff(d, myPts){
   const rivals = [0, 1].map(i => {
     const t = new V.Team(V.pick(OTHER_CLUBS) + " (" + ["Б", "В"][i] + ")", levelFor(d) * V.rf(.98, 1.08));
@@ -2272,8 +2487,10 @@ function playoff(d, myPts){
   const where = best.me ? "Ми — найкращий другий, чекали у фіналі." : "Півфінал: " + semi.txt + ".";
   return { won, text: `Плей-оф других місць: ${where} Фінал: ${fin.txt}. ${won ? "Виграли плей-оф!" : "Плей-оф програно."}` };
 }
-function nextRound(quiet){
-  closeSheet();
+/* Опівночі — кінець дня: гроші дня, відпочинок (+20 % свіжості), травми й дискваліфікації на день коротші,
+   академія, скаут. У суботу з подвійним туром відпочинок один — між двома матчами його немає. */
+function dayEnd(e){
+  if (S.test.on && !trainedToday()) trainToday(true);    // режим перевірки: команда тренується щодня сама
   if (!trainedToday()) S.academy.candidates.forEach(c => { c.p.rd = Math.min(60, (c.p.rd || 0) + 2 / 3) });   // не тренував — тренер сам, слабше
   /* гроші дня: спонсор і атрибутика, зарплати, утримання (квитки — у звіті матчу) */
   const dm = dayMoney();
@@ -2286,47 +2503,41 @@ function nextRound(quiet){
     if (p.ban > 0) p.ban--;
   });
   aiDay();
-  S.round++;
   scoutTick();
-  /* за 5 турів до кінця сезону — нагадування, у кого закінчується контракт (ПЛАН 44) */
-  if (S.round === 26 && S.remind !== S.season){
-    S.remind = S.season;
-    const ex = squadAll().filter(lastYear);
-    if (ex.length) addNews("cap", `Контракт закінчується наприкінці сезону: ${ex.map(p => p.name).join(", ")}. Продовж у картці гравця, інакше вони підуть вільними агентами.`);
-  }
-  let rolled = false;
-  if (S.round > 30){
-    /* підвищення й виліт — ОСНОВА, розділ 12 */
-    const pos = tablePos(ME.name), was = S.division, row = S.table[ME.name];
-    const prize = Math.round(V.placePrize(was, pos));
-    book("prize", prize);
-    const z = zones(was);
-    let po = null;
-    if (pos <= z.up && was > 1) S.division--;
-    else if (pos === 2 && z.playoff){ po = playoff(was, row.p); if (po.won) S.division-- }
-    else if (pos > 16 - z.down && was < BOTTOM) S.division++;
-    const gold = GOLD_PLACE[pos - 1] + (S.division < was ? GOLD_UP : 0);
-    S.gold += gold;
-    S.round = 1; S.season++;
-    squadAll().forEach(p => { p.gp = 0; p.gt = 0; p.warned = false });
-    addNews("up", `Сезон ${S.season - 1} завершено: ${pos} місце, призові ${fmt(prize)}. ` +
-      (po ? po.text + " " : "") +
-      (S.division < was ? `Підвищення — тепер Дивізіон ${S.division}!` : S.division > was ? `Виліт у Дивізіон ${S.division}.` : `Лишаємось у Дивізіоні ${S.division}.`));
-    const rec = { w: row.w, d: row.d, l: row.l, gf: row.gf, ga: row.ga, p: row.p };
-    Object.values(S.table).forEach(v => { v.p = v.w = v.d = v.l = v.gf = v.ga = 0 });
-    const sum = endOfSeason(was);
-    ageAcademyOneSeason();
-    S.lastSeason = { season: S.season - 1, pos, was, now: S.division, prize, gold, rec, fin: S.fin, ...sum, playoff: po && po.text,
-      expiring: squadAll().filter(p => p.ct === S.season).map(p => p.name), intake: S.academy.offers.length };
-    S.fin = FIN0();
-    rolled = true;
-  }
-  M.hm = null;
-  if (quiet) return;
-  openMatch(); renderTop(); show("home"); save();
-  if (rolled) seasonWindow();
+  S.clock.last = e.ts;
+  if (e.last) return seasonRollover();
+  S.day++;
+  return false;
 }
-window.nextRound = nextRound;
+/* Опівночі останнього дня місяця — перехід: підсумок сезону, підвищення й виліт (ОСНОВА §12, §14), новий сезон 1-го */
+function seasonRollover(){
+  while (S.round <= 30) autoMatch(matchEvent(S.round));   // запобіжник: недограних турів бути не повинно
+  /* підвищення й виліт — ОСНОВА, розділ 12 */
+  const pos = tablePos(ME.name), was = S.division, row = S.table[ME.name];
+  const prize = Math.round(V.placePrize(was, pos));
+  book("prize", prize);
+  const z = zones(was);
+  let po = null;
+  if (pos <= z.up && was > 1) S.division--;
+  else if (pos === 2 && z.playoff){ po = playoff(was, row.p); if (po.won) S.division-- }
+  else if (pos > 16 - z.down && was < BOTTOM) S.division++;
+  const gold = GOLD_PLACE[pos - 1] + (S.division < was ? GOLD_UP : 0);
+  S.gold += gold;
+  S.round = 1; S.season++; S.month = nextMonth(S.month); S.day = 1; S.join = null;
+  squadAll().forEach(p => { p.gp = 0; p.gt = 0; p.warned = false });
+  addNews("up", `Сезон ${S.season - 1} завершено: ${pos} місце, призові ${fmt(prize)}. ` +
+    (po ? po.text + " " : "") +
+    (S.division < was ? `Підвищення — тепер Дивізіон ${S.division}!` : S.division > was ? `Виліт у Дивізіон ${S.division}.` : `Лишаємось у Дивізіоні ${S.division}.`));
+  const rec = { w: row.w, d: row.d, l: row.l, gf: row.gf, ga: row.ga, p: row.p };
+  Object.values(S.table).forEach(v => { v.p = v.w = v.d = v.l = v.gf = v.ga = 0 });
+  const sum = endOfSeason(was);
+  ageAcademyOneSeason();
+  S.lastSeason = { season: S.season - 1, pos, was, now: S.division, prize, gold, rec, fin: S.fin, ...sum, playoff: po && po.text,
+    expiring: squadAll().filter(p => p.ct === S.season).map(p => p.name), intake: S.academy.offers.length };
+  S.fin = FIN0();
+  M.hm = null;
+  return true;
+}
 /* Вікно кінця сезону: місце, призові, гроші, ріст, кар'єри, контракти, набір в академію */
 function seasonWindow(){
   const L = S.lastSeason; if (!L) return;
@@ -2367,7 +2578,7 @@ function seasonWindow(){
    НОВИНИ, ЗБЕРЕЖЕННЯ
    ======================================================================= */
 function addNews(icon, text){
-  S.feed.unshift({ i: icon, b: text, t: `сезон ${S.season}, тур ${S.round}`, seen: false });
+  S.feed.unshift({ i: icon, b: text, t: `${S.day} ${MONTHS[S.month.m]} · сезон ${S.season}, тур ${Math.min(S.round, 30)}`, seen: false });
   S.feed = S.feed.slice(0, 20);
 }
 const sp = p => ({ n:p.name, r:p.role, g:p.gk, a:p.age, at:p.attrs, po:p.pot, gl:p.glass, pr:p.prof, fo:p.form, wp:p.wagePrem, fc:p.face, rt:p.ret, ss:p.ss, ct:p.ct, wg:p.wg, sr:p.sr, rg:p.pr, ap:p.ap, kn:p.kn, pd:p.paid, js:p.js, sd:p.side, fr:p.fresh, ou:p.out, bn:p.ban, ij:p.inj, rl:p.rl, mr:p.mr, gp:p.gp, gt:p.gt, wo:p.wo, wn:p.warned, rd:p.rd, cd:p.cd, ab:p.abl, ap2:p.abp, it:p.it });
@@ -2397,7 +2608,7 @@ function hydrate(o, t){
 function save(){
   try {
     localStorage.setItem(SAVE_KEY, JSON.stringify({
-      club: S.club, division: S.division, season: S.season, round: S.round,
+      club: S.club, division: S.division, season: S.season, round: S.round, month: S.month, day: S.day, clock: S.clock, lastRep: S.lastRep, join: S.join,
       money: S.money, gold: S.gold, focus: S.focus, table: S.table,
       results: S.results, feed: S.feed.slice(0, 12), buildings: S.buildings,
       queue: S.queue, owned: S.owned, squad: serial(ME), trained: S.trained, test: S.test,
@@ -2415,10 +2626,11 @@ function load(){
     const o = JSON.parse(raw); if (!o.club || !o.club.name) return false;
     Object.assign(S, {
       club: o.club, division: o.division ?? 12, season: o.season, round: o.round,
+      month: o.month, day: o.day || 1, clock: o.clock || { last: Date.now() }, lastRep: o.lastRep || "", join: o.join || null,
       money: o.money, gold: o.gold, focus: o.focus, table: o.table || {},
       results: o.results || [], feed: o.feed || [], buildings: o.buildings || S.buildings,
       queue: o.queue || [], owned: o.owned || { crests: [o.club.crest], kits: [o.club.kit] },
-      trained: o.trained || "", test: o.test || { on: false, win: false },
+      trained: o.trained || "", test: o.test || { on: false, win: false, shift: 0 },
       fin: o.fin || FIN0(), scout: o.scout && o.scout.left != null ? { left: o.scout.left } : { left: 10 }, scouted: o.scouted || null,
       taken: o.taken || null, lastSeason: o.lastSeason || null, remind: o.remind || 0,
       lineupAt: o.lineupAt ?? null, kits: o.kits || { g: 10, r: 5, day: 0, gUsed: 0, rUsed: [] },
@@ -2451,6 +2663,9 @@ $("#cgo").onclick = () => {
   if (name.length < 3){ $("#cerr").textContent = "Назва закоротка — щонайменше три літери."; return }
   S.club = { name, crest: newCrest, kit: newKit };
   S.owned = { crests: [newCrest], kits: [newKit] };
+  /* сезон — поточний місяць за часом гри (Іспанія); якщо тури вже йдуть, клуб заходить на місце бота (joinMidSeason) */
+  const n = gz(Date.now());
+  S.month = { y: n.y, m: n.m }; S.day = n.d; S.clock = { last: Date.now() }; S.test.shift = 0;
   buildWorld();
   /* стартові контракти: закінчуються в різні сезони, щоб не всі разом */
   squadAll().forEach(p => { p.ss = p.power(); p.wg = V.wageFor(p); p.ct = S.season + V.ri(0, 3) });
@@ -2461,6 +2676,7 @@ $("#cgo").onclick = () => {
   addNews("cap", "Президент купив клуб. Ти — новий менеджер.");
   addNews("eye", "Скаут склав список кандидатів на сезон");
   addNews("build", `Тренувальна база: рівень ${S.buildings.training}`);
+  joinMidSeason();
   $("#create").classList.remove("on");
   startGame();
   save();
@@ -2470,7 +2686,9 @@ function startGame(){
   $("#app").classList.add("on");
   buildRail();
   openMatch();
+  GAME_ON = true;
   show("home");
+  clockTick();                 // догнати все, що сталося, поки гра була закрита
   renderTop();
   if (S.login.pending) rewardSheet();
 }
