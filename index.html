@@ -321,10 +321,36 @@ tr.down td:first-child{box-shadow:inset 2px 0 0 var(--bad)}
 .ftot i{display:block;font-style:normal;font-size:9.5px;color:var(--dim);font-weight:800;letter-spacing:.1em;text-transform:uppercase}
 .ftot b{display:block;font-family:var(--display);font-size:19px;margin-top:2px}
 .ftot b.plus{color:var(--live)} .ftot b.minus{color:var(--bad)}
+/* ===== склад: поле ліворуч, лава праворуч — усе видно без прокрутки ===== */
+.lineup{display:grid;grid-template-columns:minmax(0,1.75fr) minmax(0,1fr);gap:12px;align-items:start}
+.lineup .lbench{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px 2px;padding:8px 4px;align-content:start}
+.lbench .tk{width:100%}
+.lineup .pitchbox{aspect-ratio:105/62}
+.lbench .tk .c{width:30px;height:30px}
+#sc-match.prep .wrap{grid-template-columns:minmax(0,1fr) 124px}
+#sc-match .lineup{grid-template-columns:minmax(0,2.3fr) minmax(0,1fr)}
+#sc-match.prep .live{display:none}
+#sc-match.prep #startBtn{margin-top:28px !important}
+
+/* ===== склад: кружечки з прізвищем, віком і зірками ===== */
+.tk{width:54px}
+.lpitch .tk .c{width:30px;height:30px}
+.tk i{max-width:54px}
+.tk em{display:block;font-style:normal;font-size:8.5px;font-weight:800;color:rgba(255,255,255,.75);white-space:nowrap;
+       text-shadow:0 1px 3px rgba(0,0,0,.9);line-height:1.15}
+.tk em s{text-decoration:none;color:var(--gold);letter-spacing:-.5px}
+.lbench{display:flex;flex-wrap:wrap;gap:10px 4px;padding:10px 6px;border-radius:14px;
+        background:rgba(17,24,35,.55);border:1px solid var(--line-soft)}
+.tk.bt{position:relative;transform:none;left:auto;top:auto}
+.tk.bt .c{border-color:var(--line)}
+#mPrep[hidden],#pitch[hidden]{display:none}
+tr.po td:first-child{box-shadow:inset 2px 0 0 var(--gold)}
+
 /* ===== перетягування у складі ===== */
 .tk{touch-action:none}
 .tk.dragging,.p.dragging{opacity:.35}
 .p.hold{background:rgba(217,169,60,.12)}
+.tk.hold .c{box-shadow:0 0 0 3px rgba(240,206,122,.35)}
 .tk.dropon .c{border-color:var(--gold-hi);box-shadow:0 0 0 4px rgba(240,206,122,.45)}
 .p.dropon{background:rgba(217,169,60,.16);box-shadow:inset 3px 0 0 var(--gold)}
 .tk.ctl .c{box-shadow:0 0 0 2px rgba(224,112,60,.55)}
@@ -630,20 +656,27 @@ tr.down td:first-child{box-shadow:inset 2px 0 0 var(--bad)}
           </div>
           <div class="clock paused" id="mclock">до стартового свистка</div>
           <div class="wakewarn" id="wakewarn" hidden>Екран може гаснути: телефон не дозволив тримати його увімкненим. Збільш у налаштуваннях телефону час до згасання екрана.</div>
+          <div id="mPrep">
+            <div class="lab">Склад на матч · перетягни гравця на іншого, щоб поміняти · тап — картка · з лави — затримай палець</div>
+            <div class="lineup">
+              <div class="pitchbox lpitch" id="mPitch"></div>
+              <div class="lbench" id="mBench"></div>
+            </div>
+          </div>
           <canvas id="pitch" width="900" height="520"></canvas>
-          <div class="ctrlrow">
+          <div class="ctrlrow live">
             <div><div class="lab">Швидкість</div><div class="ctrl" id="spd"></div></div>
             <div><div class="lab">Пресинг</div><div class="ctrl" id="pressCtrl"></div></div>
             <div><div class="lab">Лінія оборони</div><div class="ctrl" id="lineCtrl"></div></div>
           </div>
         </div>
         <div>
-          <div class="comm" id="comm"></div>
-          <div class="note" style="margin-top:12px">
+          <div class="comm live" id="comm"></div>
+          <div class="note live" style="margin-top:12px">
             <h3>Бонус присутності <span id="bval" style="color:var(--gold-hi)">+0,0 %</span></h3>
             <p id="bcount">Кожна твоя дія під час матчу додає команді сили. Стеля — чотири дії.</p>
           </div>
-          <div style="margin-top:12px">
+          <div class="live" style="margin-top:12px">
             <div class="lab">Заміни <span id="subcount" style="color:var(--gold)">0 / 5</span></div>
             <div class="bench" id="benchRow"></div>
           </div>
@@ -655,23 +688,24 @@ tr.down td:first-child{box-shadow:inset 2px 0 0 var(--bad)}
     <section class="sc" id="sc-team">
       <h2 class="t">Команда</h2>
       <p class="sub" id="teamSub">—</p>
-      <div class="cols">
-        <div>
-          <div class="lab">Основа · тап — картка гравця · перетягни на іншого — поміняти місцями</div>
-          <div class="pitchbox" id="teamPitch"></div>
-        </div>
-        <div>
-          <div class="lab">Запас · затримай палець і тягни на поле</div>
-          <div class="plist" id="subs"></div>
-          <div class="lab" style="margin-top:14px">Тренування дня · на чому фокус</div>
-          <div class="tabs" id="trainTabs" style="flex-wrap:wrap"></div>
-          <div class="trainrow">
-            <button class="btn" id="trainBtn">Провести тренування</button>
-            <span id="trainStat">—</span>
-          </div>
-          <div class="note"><h3>Як ростуть гравці</h3><p id="trainNote">—</p></div>
-        </div>
+      <div class="lab">Тап — картка гравця · перетягни на іншого — поміняти місцями · з лави — затримай палець</div>
+      <div class="lineup">
+        <div class="pitchbox lpitch" id="teamPitch"></div>
+        <div class="lbench" id="subs"></div>
       </div>
+    </section>
+
+    <section class="sc" id="sc-train">
+      <h2 class="t">Тренування</h2>
+      <p class="sub" id="trainSub">—</p>
+      <div class="lab">Тренування основи · на чому фокус</div>
+      <div class="tabs" id="trainTabs" style="flex-wrap:wrap"></div>
+      <div class="trainrow">
+        <button class="btn" id="trainBtn">Провести тренування</button>
+        <span id="trainStat">—</span>
+      </div>
+      <div class="note" style="max-width:720px"><h3>Як ростуть гравці</h3><p id="trainNote">—</p></div>
+      <div class="note" style="max-width:720px;margin-top:12px"><h3>Тренування молоді</h3><p>Окремі тренування вихованців академії — картками «Сила · Готовність · Здібність» — з'являться наступним кроком. Поки що академія тренується разом з основою.</p></div>
     </section>
 
     <section class="sc" id="sc-market">

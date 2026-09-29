@@ -362,21 +362,45 @@ const sponsorSeason = (d, commercial) => .45 * baseIncome(d) * (.75 + .25*Math.m
 const upkeepSeason  = (d, levels)     => baseIncome(d) * (.05 + .0006*levels);
 /* дохід розвиненого клубу дивізіону (L може бути дробовим) — мірка цін і зарплат */
 const devIncome = L => ticketsSeason(L, need(L)) + sponsorSeason(L, need(L)) + .244*baseIncome(L);
-/* стеля зарплат: 60 % від (половини доходу розвиненого клубу + половини власного) */
-function wageCap(d, ownIncome){ return Math.round(.6 * (devIncome(d)/2 + ownIncome/2)) }
-/* призові за місце (ОСНОВА 3.4, варіант Б): частка доходу розвиненого клубу — 1-ше місце дає
-   на 40 % більше грошей за сезон, ніж 16-те, тож важить, як ти граєш */
-const PLACE_PRIZE=[[1,2,.40],[3,5,.28],[6,9,.18],[10,13,.09],[14,16,.02]];
-const placePrize = (d, pos) => PLACE_PRIZE.find(([a,b])=>pos>=a&&pos<=b)[2] * devIncome(d);
+/* стеля зарплат: 75 % від (половини доходу розвиненого клубу + половини власного) — підняли разом
+   із зарплатами вгорі (прогін money-wage.js, 28.09: зі стелею 60 % ринок стає) */
+function wageCap(d, ownIncome){ return Math.round(.75 * (devIncome(d)/2 + ownIncome/2)) }
+
+/* ---------- звідки клуб бере гроші (рішення 28.09, прогін vertical/sim/money-split.js, варіант 8) ----------
+   Мірка — сезонний дохід «звичайного» клубу дивізіону на 8-му місці, з будівлями, типовими для дивізіону.
+   Його частки: квитки 38 %, спонсор 20 % (Д4 24 %, Д3 28 %, Д2 32 %, Д1 35 % — угорі клуби стають брендами),
+   атрибутика 8 %, решта — призові: 40 % з них за матчі (перемога 3 : нічия 1 : поразка 0,3),
+   60 % — за місце в кінці сезону рівними кроками, як у Прем'єр-лізі й Ла Лізі. */
+const typicalTotal = d => { const dev = devIncome(d), L = need(d);
+  const unit = .40*.174*1.5*dev/(11.25*3+7.5+11.25*.3), p1 = .60*.174*1.5*dev/(8.5/16);
+  return ticketsSeason(d, L) + sponsorSeason(d, L) + unit*(11*3+8+11*.3) + p1*9/16 };
+const SP_SHARE = d => d >= 5 ? .20 : ({ 4: .24, 3: .28, 2: .32, 1: .35 })[d];
+const tickets = (d, st)  => ticketsSeason(d, st)  * .38 * typicalTotal(d) / ticketsSeason(d, need(d));
+const sponsor = (d, com) => sponsorSeason(d, com) * SP_SHARE(d) * typicalTotal(d) / sponsorSeason(d, need(d));
+const merch   = (d, com) => sponsorSeason(d, com) * .08 * typicalTotal(d) / sponsorSeason(d, need(d));
+const prizeMid = d => typicalTotal(d) - tickets(d, need(d)) - sponsor(d, need(d)) - merch(d, need(d));
+const MATCH_W = { w: 3, d: 1, l: .3 };
+const matchPay = (d, res) => .40 * prizeMid(d) / (11*3 + 8 + 11*.3) * MATCH_W[res];
+const placePrize = (d, pos) => .60 * prizeMid(d) / (9/16) * (17 - pos) / 16;
+/* скільки призових за сезон отримує клуб на 8-му місці (11 перемог, 8 нічиїх, 11 поразок) — для прогнозу */
+const prizeAt8 = d => 11*matchPay(d,"w") + 8*matchPay(d,"d") + 11*matchPay(d,"l") + placePrize(d, 8);
+/* стадіон: місткість від 1 000 на 1-му рівні до 400 000 на 20-му; вболівальників приходить стільки,
+   скільки вміщує стадіон рівня «типовий для дивізіону + 2» — більший стадіон стоїть напівпорожній */
+const seats = L => Math.round(1000 * Math.pow(400, (Math.max(1, L) - 1) / 19) / 100) * 100;
+const fans  = d => seats(Math.round(need(d) + 2));
 /* контракт на 1–4 роки: коротший дорожчий за рік, довший дешевший (ОСНОВА, ПЛАН 43) */
 const CONTRACT_K = { 1: 1.15, 2: 1.07, 3: 1.00, 4: 0.95 };
 
 const ageW = a => a<=20?.6 : a<=24?.85 : a<=29?1 : a<=32?.9 : .75;
 const ageV = a => a<=20?1.3 : a<=23?1.2 : a<=26?1.1 : a<=29?1 : a<=31?.6 : .3;
 const youthK = a => a<=19?1 : a<=21?.7 : a<=23?.4 : 0;
-/* зарплата за сезон: 1,5 % доходу розвиненого клубу того рівня, якому відповідає сила.
+/* зарплата за сезон: 1,5 % доходу розвиненого клубу того рівня, якому відповідає сила,
+   помножене на криву: до рівня Д6 склад забирає ≈ 15 % доходу, вище частка росте до ≈ 30 % у Д1 —
+   зірки «з'їдають» дохід угорі, і гроші не накопичуються (рішення 28.09, прогін money-wage.js, W7б).
    Якщо в гравця є контракт — платимо зарплату з контракту. */
-function wageFor(p){ return Math.round(.015 * devIncome(levelOf(p.power())) * ageW(p.age) * (p.wagePrem || 1)) }
+const wageK = L => (L >= 6 ? .15 : .15 + .25 * (6 - Math.max(1, L)) / 5) / .14;
+function wageFor(p){ const L = levelOf(p.power());
+  return Math.round(.015 * devIncome(L) * wageK(L) * ageW(p.age) * (p.wagePrem || 1)) }
 function wageOf(p){ return p.wg != null ? p.wg : wageFor(p) }
 /* ціна: 14 % доходу розвиненого клубу його рівня (з поправкою на вік); молодий талант —
    не менше 0,4 від ціни гравця, яким він стане */
@@ -423,4 +447,5 @@ window.VERT = {
   episode, quickMatch, makeFixtures, duel, uname, CLUBS,
   wageOf, wageFor, valueOf, divisionIncome, baseIncome, devIncome, need, levelOf, strengthAt, ceilLevel, signTier, stadiumFor,
   ticketsSeason, sponsorSeason, placePrize, upkeepSeason, wageCap, buildCost, buildHours, transferCommission, CONTRACT_K,
+  typicalTotal, tickets, sponsor, merch, matchPay, prizeAt8, seats, fans,
 };
