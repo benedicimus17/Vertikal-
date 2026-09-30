@@ -463,6 +463,15 @@ tr.po td:first-child{box-shadow:inset 2px 0 0 var(--gold)}
 #create.on{display:block}
 #create .inner{max-width:940px;margin:0 auto}
 #create h2{margin:0;font-family:var(--display);font-size:30px;font-weight:600}
+.csteps{display:flex;gap:7px;margin:0 0 14px}
+.csteps i{width:26px;height:4px;border-radius:2px;background:var(--line);transition:background .3s}
+.csteps i.on{background:var(--gold)}
+.cstep.in{animation:stepIn .32s cubic-bezier(.2,.8,.2,1) both}
+.cstep.out{animation:stepOut .18s ease-in both}
+@keyframes stepIn{from{opacity:0;transform:translateX(28px)}to{opacity:1;transform:none}}
+@keyframes stepOut{from{opacity:1;transform:none}to{opacity:0;transform:translateX(-28px)}}
+.crow{display:flex;gap:10px;margin-top:18px;flex-wrap:wrap}
+.cstep .picks{margin-bottom:6px}
 #create .lead{margin:4px 0 18px;font-size:12.5px;color:var(--muted);max-width:70ch}
 .field{margin-bottom:16px}
 .field label{display:block;font-size:10px;font-weight:800;letter-spacing:.16em;text-transform:uppercase;
@@ -607,32 +616,34 @@ tr.po td:first-child{box-shadow:inset 2px 0 0 var(--gold)}
 
 <div id="create">
   <div class="inner">
-    <h2>Твій клуб</h2>
-    <p class="lead">Порожній клуб у дванадцятому дивізіоні, без трофеїв і без історії. Назва, емблема і форма — назавжди твої; далі їх можна буде змінити тільки за золото.</p>
+    <div class="csteps" id="cSteps"><i class="on"></i><i></i><i></i></div>
 
-    <div class="field">
-      <label for="cname">Назва клубу</label>
-      <input id="cname" maxlength="22" placeholder="Наприклад, Аврора" autocomplete="off" spellcheck="false">
-    </div>
+    <section class="cstep in" data-s="1">
+      <h2>Твій клуб</h2>
+      <p class="lead">Порожній клуб у дванадцятому дивізіоні, без трофеїв і без історії. Назва, емблема і форма — назавжди твої; далі їх можна буде змінити тільки за золото.</p>
+      <div class="field">
+        <label for="cname">Назва клубу</label>
+        <input id="cname" maxlength="22" placeholder="Наприклад, Аврора" autocomplete="off" spellcheck="false">
+      </div>
+      <div class="err" id="cerr"></div>
+      <button class="btn" id="cnext1">Далі</button>
+      <p class="turnhint">Тримай телефон вертикально, поки вводиш назву. Після створення клубу гра відкриється горизонтально — поверни телефон.</p>
+    </section>
 
-    <div class="field">
-      <label>Емблема — з твоєю назвою (тест, 5 з 20)</label>
+    <section class="cstep" data-s="2" hidden>
+      <h2>Емблема</h2>
+      <p class="lead" id="cnameEcho"></p>
       <div class="picks" id="crestsNew"></div>
-    </div>
+      <div hidden><div class="picks" id="crests"></div></div>
+      <div class="crow"><button class="btn ghost" data-back>Назад</button><button class="btn" id="cnext2">Далі</button></div>
+    </section>
 
-    <div class="field" hidden>
-      <label>Емблема</label>
-      <div class="picks" id="crests"></div>
-    </div>
-
-    <div class="field">
-      <label>Форма</label>
+    <section class="cstep" data-s="3" hidden>
+      <h2>Форма</h2>
+      <p class="lead">Кольори, у яких виходить твоя команда.</p>
       <div class="picks" id="kits"></div>
-    </div>
-
-    <div class="err" id="cerr"></div>
-    <button class="btn" id="cgo">Заснувати клуб</button>
-    <p class="turnhint">Тримай телефон вертикально, поки вводиш назву. Після створення клубу гра відкриється горизонтально — поверни телефон.</p>
+      <div class="crow"><button class="btn ghost" data-back>Назад</button><button class="btn" id="cgo">Заснувати клуб</button></div>
+    </section>
   </div>
 </div>
 

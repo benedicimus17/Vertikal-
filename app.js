@@ -10,7 +10,7 @@ const fmt = n => Math.round(n).toLocaleString("uk-UA").replace(/,/g, " ");
    телефону, але новій версії не підходять — клуб створюється заново. */
 const SAVE_KEY = "vert9";
 /* номер версії видно внизу меню — щоб на телефоні одразу було ясно, що відкрилось */
-const VERSION = "v24.4";
+const VERSION = "v24.5";
 
 /* =======================================================================
    ЕМБЛЕМИ І ФОРМИ (малюються кодом, у кожного клуба свої)
@@ -44,12 +44,12 @@ const IMG_CRESTS = {
          zone: { t: "rect", cx: 194, cy: 106, w: 288, max: 40, min: 18 } },
   101: { file: "crest-bridge", w: 406, h: 512, color: "#F0DCA0", edge: "#4A0A18",
          zone: { t: "arc", x0: 108, y0: 61, cx: 205, cy: 23, x1: 302, y1: 61, w: 186, max: 34, min: 16 } },
-  102: { file: "crest-ship", w: 410, h: 512, color: "#134B57", edge: "#FFF6E0",
-         zone: { t: "rect", cx: 203, cy: 106, w: 320, max: 42, min: 16 } },
+  102: { file: "crest-ship", w: 410, h: 512, color: "#134B57", edge: "#FFF6E0",           // кремова стрічка вигнута: вісь у центрі y 88, по краях 101
+         zone: { t: "arc", x0: 45, y0: 101, cx: 202, cy: 75, x1: 360, y1: 101, w: 290, max: 38, min: 16 } },
   103: { file: "crest-wolf", w: 430, h: 512, color: "#3B1563", edge: "#FFFFFF",
-         zone: { t: "arc", x0: 105, y0: 101, cx: 215, cy: 19, x1: 325, y1: 101, w: 215, max: 36, min: 14 } },
+         zone: { t: "arc", x0: 105, y0: 83, cx: 215, cy: 8, x1: 325, y1: 83, w: 215, max: 34, min: 14 } },   // біла смуга: вісь у центрі y 45,5
   104: { file: "crest-sun", w: 512, h: 511, color: "#E6C67E", edge: "#141414",
-         zone: { t: "rect", cx: 256, cy: 277, w: 330, max: 44, min: 16 } },
+         zone: { t: "rect", cx: 256, cy: 256, w: 330, max: 40, min: 16 } },                // смуга між золотими лініями: y 224–288
 };
 const IMG_IDS = Object.keys(IMG_CRESTS).map(Number);
 const CREST_FONT = '"Cormorant Garamond", Georgia, serif', CREST_WEIGHT = 600;
@@ -3169,11 +3169,35 @@ function renderCreate(){
   $$("#crests button, #crestsNew button").forEach(b => b.onclick = () => { newCrest = +b.dataset.c; renderCreate() });
   $$("#kits button").forEach(b   => b.onclick = () => { newKit  = +b.dataset.k; renderCreate() });
 }
+/* кроки: 1 — назва, 2 — емблема (вже з назвою), 3 — форма */
+let cStep = 1;
+function goStep(n, instant){
+  const cur = $(`.cstep[data-s="${cStep}"]`), nxt = $(`.cstep[data-s="${n}"]`);
+  if (!nxt) return;
+  const show = () => {
+    $$(".cstep").forEach(e => { e.hidden = e !== nxt; e.classList.remove("out", "in") });
+    nxt.classList.add("in");
+    $$("#cSteps i").forEach((d, i) => d.classList.toggle("on", i < n));
+    cStep = n;
+    if (n === 2) $("#cnameEcho").textContent = `Назва: ${$("#cname").value.trim()}`;
+    renderCreate(); $("#create").scrollTop = 0;
+  };
+  if (instant || !cur) return show();
+  cur.classList.add("out"); setTimeout(show, 180);
+}
+$("#cnext1").onclick = () => {
+  const n = $("#cname").value.trim();
+  if (n.length < 3){ $("#cerr").textContent = "Назва закоротка — щонайменше три літери."; return }
+  $("#cerr").textContent = ""; goStep(2);
+};
+$("#cname").addEventListener("keydown", e => { if (e.key === "Enter"){ e.preventDefault(); $("#cnext1").click() } });
+$("#cnext2").onclick = () => goStep(3);
+$$("[data-back]").forEach(b => b.onclick = () => goStep(cStep - 1));
 $("#cname").addEventListener("input", renderCreate);
 if (document.fonts && document.fonts.ready) document.fonts.ready.then(() => { if ($("#create").classList.contains("on")) renderCreate() });
 $("#cgo").onclick = () => {
   const name = $("#cname").value.trim();
-  if (name.length < 3){ $("#cerr").textContent = "Назва закоротка — щонайменше три літери."; return }
+  if (name.length < 3){ goStep(1, true); $("#cerr").textContent = "Назва закоротка — щонайменше три літери."; return }
   S.club = { name, crest: newCrest, kit: newKit };
   S.owned = { crests: [newCrest], kits: [newKit] };
   /* сезон — поточний місяць за часом гри (Іспанія); якщо тури вже йдуть, клуб заходить на місце бота (joinMidSeason) */
