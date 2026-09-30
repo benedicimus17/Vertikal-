@@ -306,7 +306,7 @@ const ZW={
   RW:{att:1,R:.8}, LW:{att:1,L:.8}, ST:{att:1}, ST2:{att:1},
 };
 /* поправка за кількість: (вага лінії / вага в 4-3-3) ^ степінь; 4-3-3 = 1 */
-const FORM_K={def:.5,mid:.2,att:.45,L:.1,R:.1,q:.2};   // підібрано прогоном schemes.js (30.09)
+const FORM_K={def:.5,mid:.45,att:.35,L:.1,R:.1,q:.2,mix:.45};   // підібрано прогонами schemes.js і sens.js (30.09)
 /* вага лінії «в середньому по схемах» — поправка за кількість в середньому дорівнює 1, голів не меншає */
 const ZREF={}; ["def","mid","att","L","R"].forEach(z=>{ZREF[z]=Object.values(FORMS).reduce((s,f)=>s+f.reduce((t,sl)=>t+((ZW[sl]||{})[z]||0),0),0)/Object.keys(FORMS).length});
 /* володіння: частка атак за силою центру; q < 1 стискає перевагу (центр не рахується двічі на повну) */
@@ -409,7 +409,9 @@ function episode(hm,aw,ph){
   att.attacks++;
   const lineAtt = (att.line-1)*2.2, lineDef = (dfn.line-1)*-1.8;
 
-  const [a1,ap1]=att.zMid(); let [d1,dp1]=dfn.zMid(); d1*=dfn.press;
+  /* боротьба в центрі: разом із півзахисниками — нападники (пресинг спереду) і захисники (підстраховка), частка FORM_K.mix */
+  const MX=FORM_K.mix, [a1m,ap1]=att.zMid(), [d1m,dp1]=dfn.zMid();
+  const a1=MX?(1-MX)*a1m+MX*att.zAtt()[0]:a1m; let d1=MX?(1-MX)*d1m+MX*dfn.zDef()[0]:d1m; d1*=dfn.press;
   if(R()>duel(a1,d1,BIAS+lineAtt)){
     if(dp1.length) foulCheck(att,dfn,pick(dp1),false,out);
     out.push({t:"lose",team:dfn,zone:"mid",txt:`${dfn.name} перехоплює в центрі.`});
@@ -419,7 +421,8 @@ function episode(hm,aw,ph){
   let a2,ap,d2,dp;
   if(ch==="L"){[a2,ap]=att.zLeft();[d2,dp]=dfn.zRight()}
   else if(ch==="R"){[a2,ap]=att.zRight();[d2,dp]=dfn.zLeft()}
-  else {[a2,ap]=att.zMid();[d2,dp]=dfn.zMid()}
+  else {[a2,ap]=att.zMid();[d2,dp]=dfn.zMid();
+    if(MX){a2=(1-MX)*a2+MX*att.zAtt()[0]; d2=(1-MX)*d2+MX*dfn.zDef()[0]}}   // атака центром: теж разом із нападниками й захисниками
   const carrier = ap.length?pick(ap):null; if(carrier) carrier.touches++;
   if(R()>duel(a2,d2,BIAS+lineAtt)){
     if(dp.length) foulCheck(att,dfn,pick(dp),true,out);

@@ -10,7 +10,7 @@ const fmt = n => Math.round(n).toLocaleString("uk-UA").replace(/,/g, " ");
    телефону, але новій версії не підходять — клуб створюється заново. */
 const SAVE_KEY = "vert9";
 /* номер версії видно внизу меню — щоб на телефоні одразу було ясно, що відкрилось */
-const VERSION = "v22";
+const VERSION = "v22.1";
 
 /* =======================================================================
    ЕМБЛЕМИ І ФОРМИ (малюються кодом, у кожного клуба свої)
@@ -1793,10 +1793,15 @@ function buyItem(kind, i){
   addNews("cap", kind === "crest" ? "Клуб придбав нову емблему" : "Клуб придбав нову форму");
   renderShop(); renderTop(); save();
 }
+/* коротке повідомлення: смужка внизу, сама зникає й нічого не закриває (рішення 30.09 — вікно на весь екран дратувало) */
+let toastTimer = null;
 function toast(txt){
-  $("#sheet").innerHTML = `<h2>${txt}</h2>
-    <button class="btn ghost sm" onclick="closeSheet()">Закрити</button>`;
-  openSheet();
+  let el = $("#toastbar");
+  if (!el){ el = document.createElement("div"); el.id = "toastbar"; document.body.appendChild(el) }
+  el.textContent = String(txt).replace(/<[^>]+>/g, "");
+  el.classList.add("on");
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => el.classList.remove("on"), 2800);
 }
 
 /* =======================================================================
