@@ -10,7 +10,7 @@ const fmt = n => Math.round(n).toLocaleString("uk-UA").replace(/,/g, " ");
    телефону, але новій версії не підходять — клуб створюється заново. */
 const SAVE_KEY = "vert9";
 /* номер версії видно внизу меню — щоб на телефоні одразу було ясно, що відкрилось */
-const VERSION = "v24";
+const VERSION = "v24.4";
 
 /* =======================================================================
    ЕМБЛЕМИ І ФОРМИ (малюються кодом, у кожного клуба свої)
@@ -32,7 +32,62 @@ const CREST_SYM = [
   '<path d="M20 38V22l6-5 6 5v16z" fill="{a}"/><path d="M23.5 38v-6h5v6" fill="{m}"/>',
   '<path d="M16 24l10 5 10-5M16 31l10 5 10-5" fill="none" stroke="{a}" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>',
 ];
-function crestSVG(id){
+/* =======================================================================
+   ЕМБЛЕМИ-КАРТИНКИ З НАЗВОЮ КЛУБУ (тест 30.09)
+   Малюнок емблеми (вирізаний, прозорий) + назва клубу, яку гра пише в «зоні напису» емблеми.
+   Зона — прямокутник або дуга; розміри виміряні на малюнку (vertical/tools/cut_emblem.py).
+   Довга назва: літери стискаються до мінімуму, далі — ініціали (як «ФКМ» на гербах справжніх клубів).
+   ======================================================================= */
+const IMG_BASE = 100;
+const IMG_CRESTS = {
+  100: { file: "crest-lighthouse", w: 389, h: 512, color: "#D8BA7A", edge: "#0B1A3A",
+         zone: { t: "rect", cx: 194, cy: 106, w: 288, max: 40, min: 18 } },
+  101: { file: "crest-bridge", w: 406, h: 512, color: "#F0DCA0", edge: "#4A0A18",
+         zone: { t: "arc", x0: 108, y0: 61, cx: 205, cy: 23, x1: 302, y1: 61, w: 186, max: 34, min: 16 } },
+  102: { file: "crest-ship", w: 410, h: 512, color: "#134B57", edge: "#FFF6E0",
+         zone: { t: "rect", cx: 203, cy: 106, w: 320, max: 42, min: 16 } },
+  103: { file: "crest-wolf", w: 430, h: 512, color: "#3B1563", edge: "#FFFFFF",
+         zone: { t: "arc", x0: 105, y0: 101, cx: 215, cy: 19, x1: 325, y1: 101, w: 215, max: 36, min: 14 } },
+  104: { file: "crest-sun", w: 512, h: 511, color: "#E6C67E", edge: "#141414",
+         zone: { t: "rect", cx: 256, cy: 277, w: 330, max: 44, min: 16 } },
+};
+const IMG_IDS = Object.keys(IMG_CRESTS).map(Number);
+const CREST_FONT = '"Cormorant Garamond", Georgia, serif', CREST_WEIGHT = 600;
+let _cctx = null, _cid = 0;
+function crestTextW(txt, size){
+  _cctx = _cctx || document.createElement("canvas").getContext("2d");
+  _cctx.font = `${CREST_WEIGHT} ${size}px ${CREST_FONT}`;
+  return _cctx.measureText(txt).width + txt.length * size * .05;          // + розрядка
+}
+const xmlEsc = t => t.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+function fitCrestText(name, z){
+  let txt = name.toUpperCase().trim(), size = z.max, w = crestTextW(txt, size);
+  if (w > z.w){ size = Math.max(z.min, size * z.w / w); w = crestTextW(txt, size) }
+  if (w > z.w && /\s/.test(txt)){                                        // багатослівна назва не влізла — ініціали
+    txt = txt.split(/\s+/).map(x => x[0]).join("").slice(0, 4); size = z.max; w = crestTextW(txt, size);
+    if (w > z.w){ size = Math.max(z.min, size * z.w / w); w = crestTextW(txt, size) }
+  }
+  return { txt, size, squeeze: w > z.w + .5 };
+}
+function imgCrestSVG(id, name, showName){
+  const c = IMG_CRESTS[id];
+  let label = "";
+  if (showName){
+    const z = c.zone, f = fitCrestText(name || "НАЗВА", z);
+    const st = `font-family='${CREST_FONT}' font-weight="${CREST_WEIGHT}" font-size="${f.size.toFixed(1)}" fill="${c.color}" stroke="${c.edge}" stroke-width="${(f.size * .05).toFixed(2)}" paint-order="stroke" stroke-linejoin="round" letter-spacing="${(f.size * .05).toFixed(2)}"`;
+    const tl = f.squeeze ? ` textLength="${z.w}" lengthAdjust="spacingAndGlyphs"` : "";
+    if (z.t === "rect") label = `<text x="${z.cx}" y="${z.cy}" text-anchor="middle" dominant-baseline="central" ${st}${tl}>${xmlEsc(f.txt)}</text>`;
+    else {
+      const off = f.size * .35, pid = "cp" + (++_cid);                   // базова лінія нижче осі стрічки
+      label = `<defs><path id="${pid}" d="M${z.x0},${z.y0 + off} Q${z.cx},${z.cy + off} ${z.x1},${z.y1 + off}"/></defs>
+        <text text-anchor="middle" ${st}><textPath href="#${pid}" startOffset="50%"${tl}>${xmlEsc(f.txt)}</textPath></text>`;
+    }
+  }
+  return `<svg x="0" y="0" width="52" height="60" viewBox="0 0 ${c.w} ${c.h}" preserveAspectRatio="xMidYMid meet" overflow="visible">
+    <image href="img/crests/${c.file}.webp" x="0" y="0" width="${c.w}" height="${c.h}"/>${label}</svg>`;
+}
+function crestSVG(id, name, showName){
+  if (IMG_CRESTS[id]) return imgCrestSVG(id, name, showName);
   const shape = CREST_SHAPES[id % CREST_SHAPES.length];
   const [m, a] = CREST_PAL[id % CREST_PAL.length];
   const sym = CREST_SYM[Math.floor(id / 3) % CREST_SYM.length].replaceAll("{a}", a).replaceAll("{m}", m);
@@ -465,7 +520,7 @@ function token(p, slot, onPitch){
   const state = p.out > 0 ? `<span class="hu">травма ${p.out} д</span>` : p.ban > 0 ? `<span class="hu">диск.</span>` : off ? `<span class="fp">${fp} %</span>` : `${p.age} · <s>${"★".repeat(p.stars())}</s>`;
   return `<button class="tk drag ${onPitch ? "" : "bt"} ${off ? "off" : ""} ${hurt ? "hurt" : ""} ${warn ? "ctl" : ""}" data-slot="${slot}"
       style="${pos}" title="${p.name} · ${posLbl(p)} · свіжість ${fr} %${p.out > 0 ? " · " + p.inj + ", ще " + p.out + " " + dayW(p.out) : ""}${off ? ` · на цьому місці ${fp} %` : ""}${warn ? " · " + warn : ""}">
-    <span class="c">${p.face ? `<img src="${p.face}" alt="">` : (onPitch ? V.SLOT_POS[slot] : posLbl(p))}<b>${pw}</b><span class="fbar ${fr < 50 ? "vlo" : fr < 75 ? "lo" : ""}"><i style="width:${fr}%"></i></span><span class="md" style="background:${moodOf(p)[2]}"></span></span>
+    <span class="c">${faceOf(p) ? `<img src="${faceSmall(p)}" alt="">` : (onPitch ? V.SLOT_POS[slot] : posLbl(p))}<b>${pw}</b><span class="fbar ${fr < 50 ? "vlo" : fr < 75 ? "lo" : ""}"><i style="width:${fr}%"></i></span><span class="md" style="background:${moodOf(p)[2]}"></span></span>
     <i>${sur}</i><em>${state}</em></button>`;
 }
 const pitchToken = (p, slot) => token(p, slot, true);
@@ -489,9 +544,62 @@ const lastCareer = p => p.age + 1 >= p.ret;
 /* ветеранам — короткі контракти: від 30 років до 2, від 32 — лише на рік (поновлюється щороку) */
 const maxYears = p => lastCareer(p) || p.age >= 32 ? 1 : p.age >= 30 ? 2 : 4;
 /* Демо-обличчя: поки воно одне, його отримує один гравець і живе з ним, а не зі слотом. */
+/* Обличчя гравців (тест 30.09): набір img/faces/tNN.jpg. Кожному гравцю обличчя дається один раз і зберігається. */
+const FACE_N = 19;
+function faceOf(p){
+  if (!p) return "";
+  if (!p.face || p.face === "img/faces/f01.jpg"){
+    if (ME && squadAll().includes(p)) ensureDemoFace();                     // свій склад — усім різні обличчя
+    if (!p.face || p.face === "img/faces/f01.jpg") p.face = `img/faces/t${String(1 + hash32(p.name || "x") % FACE_N).padStart(2, "0")}.jpg`;
+  }
+  return p.face;
+}
+/* Форма клубу на фото (рішення Марії 30.09): сіру футболку на обличчі перефарбовує гра в форму команди гравця.
+   Футболка знаходиться за кольором (майже без відтінку, нижня частина кадру), візерунок — за формою клубу (смуги, обручі, половини, діагональ).
+   Складки тканини лишаються: яскравість пікселя множить колір форми. Результат кешується. */
+const KIT_FACE_CACHE = {};
+const hexRGB = h => [1, 3, 5].map(i => parseInt(h.slice(i, i + 2), 16));
+function kitFace(img, src, kitId){
+  const key = src + "|" + kitId;
+  if (KIT_FACE_CACHE[key]){ img.src = KIT_FACE_CACHE[key]; return }
+  img.style.opacity = 0;
+  const im = new Image();
+  im.onload = () => {
+    try {
+      const W = im.width, H = im.height, cv = document.createElement("canvas"); cv.width = W; cv.height = H;
+      const cx = cv.getContext("2d"); cx.drawImage(im, 0, 0);
+      const d = cx.getImageData(0, 0, W, H), a = d.data;
+      const [c1, c2] = KIT_PAL[kitId % KIT_PAL.length].map(hexRGB), type = Math.floor(kitId / 2) % 4;
+      const y0 = Math.floor(H * .72), lums = [];
+      const isShirt = i => { const r = a[i], g = a[i + 1], b = a[i + 2], lum = (r + g + b) / 3; return Math.max(r, g, b) - Math.min(r, g, b) <= 16 && lum > 62 && lum < 215 };
+      for (let y = y0; y < H; y += 3) for (let x = 0; x < W; x += 3){ const i = (y * W + x) * 4; if (isShirt(i)) lums.push((a[i] + a[i + 1] + a[i + 2]) / 3) }
+      lums.sort((p, q) => p - q); const ref = lums.length ? lums[lums.length >> 1] : 128;
+      for (let y = y0; y < H; y++) for (let x = 0; x < W; x++){
+        const i = (y * W + x) * 4; if (!isShirt(i)) continue;
+        const alt = type === 0 ? (Math.floor(x / (W / 9)) % 2)
+                  : type === 1 ? (Math.floor((y - y0) / (H / 16)) % 2)
+                  : type === 2 ? (x > W / 2 ? 1 : 0)
+                  : (Math.floor((x + y) / (W / 6)) % 2);
+        const c = alt ? c2 : c1, sh = .55 + .45 * Math.min(1.6, ((a[i] + a[i + 1] + a[i + 2]) / 3) / ref);
+        a[i] = Math.min(255, c[0] * sh); a[i + 1] = Math.min(255, c[1] * sh); a[i + 2] = Math.min(255, c[2] * sh);
+      }
+      cx.putImageData(d, 0, 0);
+      KIT_FACE_CACHE[key] = cv.toDataURL("image/jpeg", .9); img.src = KIT_FACE_CACHE[key];
+    } catch (e) { img.src = src }
+    img.style.opacity = 1;
+  };
+  im.onerror = () => { img.style.opacity = 1 };
+  im.src = src;
+}
+/* щільний кадр (голова) для маленьких кружечків */
+const faceSmall = p => { const f = faceOf(p); return f ? f.replace(".jpg", "_s.jpg") : "" };
 function ensureDemoFace(){
   const all = [ME.gk, ...Object.values(ME.xi), ...ME.bench];
-  if (!all.some(p => p.face)) ME.striker().face = "img/faces/f01.jpg";
+  /* склад свого клубу — усім різні обличчя, скільки вистачає */
+  const used = new Set(all.map(p => p.face).filter(Boolean));
+  all.forEach(p => { if (p.face && p.face !== "img/faces/f01.jpg") return;
+    let k = hash32(p.name) % FACE_N, g = 0; while (used.has(`img/faces/t${String(1 + k).padStart(2, "0")}.jpg`) && g++ < FACE_N) k = (k + 1) % FACE_N;
+    p.face = `img/faces/t${String(1 + k).padStart(2, "0")}.jpg`; used.add(p.face) });
 }
 function renderTeam(){
   ensureDemoFace();
@@ -858,7 +966,7 @@ function kitBar(slot, p){
 }
 function openPlayer(slot){
   const p = getP(slot);
-  const face = p.face;
+  const face = faceOf(p);
   $("#sheet").innerHTML = `<div class="pc">
       <div class="face">${face ? `<img src="${face}" alt="">` : SILHOUETTE}</div>
       <div class="info">
@@ -878,9 +986,9 @@ function openPlayer(slot){
       <p style="margin-top:6px">${contractText(p)} Оціночна вартість ${fmt(V.valueOf(p))}.</p>
       ${p.ct != null && p.ct <= S.season && !lastCareer(p) ? `<button class="btn sm" id="renewBtn" style="margin-top:8px">Продовжити контракт</button>` : ""}</div>
     <div class="strip">${mySlots().map(s => {
-      const q = getP(s), f = q.face;
+      const q = getP(s), f = faceOf(q);
       return `<button data-s="${s}" class="${s === slot ? "on" : ""}" title="${q.name}">
-        ${f ? `<img src="${f}" alt="">` : SILHOUETTE}<u>${V.SLOT_POS[s]}</u></button>`;
+        ${f ? `<img src="${faceSmall(q)}" alt="">` : SILHOUETTE}<u>${V.SLOT_POS[s]}</u></button>`;
     }).join("")}</div>
     <div style="display:flex;gap:8px;margin-top:14px;flex-wrap:wrap">
       <button class="btn ghost sm" onclick="closeSheet()">Закрити</button>
@@ -888,6 +996,7 @@ function openPlayer(slot){
     <p style="font-size:11px;color:var(--dim);margin:8px 0 0">Щоб поміняти гравців місцями — перетягни одного на іншого в розділі «Команда».</p>`;
   $$("#sheet .strip button").forEach(b => b.onclick = () => openPlayer(b.dataset.s));
   if ($("#renewBtn")) $("#renewBtn").onclick = () => contractSheet(p, { title: `Продовження: ${p.name}`, renew: true });
+  const fimg = $("#sheet .pc .face img"); if (fimg && face) kitFace(fimg, face, S.club.kit);   // футболка — у формі свого клубу
   openSheet();
 }
 function closeSheet(){ $("#modal").classList.remove("on", "lock"); $("#modal .sheet").scrollTop = 0 }
@@ -1453,7 +1562,7 @@ function marketListings(src){
                 stars: r => -(starsSeen(r.p)[0] + starsSeen(r.p)[1]) / 2 };
   return rows.sort((a, b) => key[MF.sort](a) - key[MF.sort](b));
 }
-const avatar = p => `<div class="av">${p.face ? `<img src="${p.face}" alt="">` : `<span>${p.pos()}</span>`}</div>`;
+const avatar = p => `<div class="av">${faceOf(p) ? `<img src="${faceSmall(p)}" alt="">` : `<span>${p.pos()}</span>`}</div>`;
 function mcard(r, i){
   const k = dealOf(r), g = k.g, p = r.p;
   const btn = !g.ok ? `<button class="btn ghost sm" disabled>не піде</button>`
@@ -3048,15 +3157,20 @@ function load(){
 /* =======================================================================
    СТВОРЕННЯ КЛУБА І ЗАПУСК
    ======================================================================= */
-let newCrest = 0, newKit = 0;
+let newCrest = 100, newKit = 0;
 function renderCreate(){
+  const typed = $("#cname").value.trim();
+  $("#crestsNew").innerHTML = IMG_IDS.map(i =>
+    `<button class="pickitem big ${i === newCrest ? "on" : ""}" data-c="${i}"><svg viewBox="0 0 52 60">${crestSVG(i, typed, true)}</svg></button>`).join("");
   $("#crests").innerHTML = [...Array(CREST_COUNT).keys()].map(i =>
     `<button class="pickitem ${i === newCrest ? "on" : ""}" data-c="${i}"><svg viewBox="0 0 52 60">${crestSVG(i)}</svg></button>`).join("");
   $("#kits").innerHTML = [...Array(KIT_COUNT).keys()].map(i =>
     `<button class="pickitem ${i === newKit ? "on" : ""}" data-k="${i}"><svg viewBox="0 0 40 46">${kitSVG(i)}</svg></button>`).join("");
-  $$("#crests button").forEach(b => b.onclick = () => { newCrest = +b.dataset.c; renderCreate() });
+  $$("#crests button, #crestsNew button").forEach(b => b.onclick = () => { newCrest = +b.dataset.c; renderCreate() });
   $$("#kits button").forEach(b   => b.onclick = () => { newKit  = +b.dataset.k; renderCreate() });
 }
+$("#cname").addEventListener("input", renderCreate);
+if (document.fonts && document.fonts.ready) document.fonts.ready.then(() => { if ($("#create").classList.contains("on")) renderCreate() });
 $("#cgo").onclick = () => {
   const name = $("#cname").value.trim();
   if (name.length < 3){ $("#cerr").textContent = "Назва закоротка — щонайменше три літери."; return }

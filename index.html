@@ -474,6 +474,7 @@ tr.po td:first-child{box-shadow:inset 2px 0 0 var(--gold)}
 .pickitem{width:62px;height:70px;border-radius:12px;border:1px solid var(--line);background:rgba(17,24,35,.7);
           display:grid;place-items:center;padding:5px}
 .pickitem svg{width:100%;height:100%}
+.pickitem.big{width:150px;height:176px;padding:4px}
 .pickitem.on{border-color:var(--gold);background:rgba(217,169,60,.12);box-shadow:0 0 0 1px var(--hair)}
 .err{color:var(--bad);font-size:11.5px;font-weight:700;margin-top:8px;min-height:16px}
 .turnhint{display:none;margin:14px 0 0;font-size:11.5px;color:var(--dim);line-height:1.5;max-width:46ch}
@@ -615,6 +616,11 @@ tr.po td:first-child{box-shadow:inset 2px 0 0 var(--gold)}
     </div>
 
     <div class="field">
+      <label>Емблема — з твоєю назвою (тест, 5 з 20)</label>
+      <div class="picks" id="crestsNew"></div>
+    </div>
+
+    <div class="field" hidden>
       <label>Емблема</label>
       <div class="picks" id="crests"></div>
     </div>
