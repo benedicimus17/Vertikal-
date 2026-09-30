@@ -10,7 +10,7 @@ const fmt = n => Math.round(n).toLocaleString("uk-UA").replace(/,/g, " ");
    телефону, але новій версії не підходять — клуб створюється заново. */
 const SAVE_KEY = "vert9";
 /* номер версії видно внизу меню — щоб на телефоні одразу було ясно, що відкрилось */
-const VERSION = "v24.5";
+const VERSION = "v24.6";
 
 /* =======================================================================
    ЕМБЛЕМИ І ФОРМИ (малюються кодом, у кожного клуба свої)
@@ -377,6 +377,7 @@ function renderTop(){
   $("#topCrest").innerHTML = crestSVG(S.club.crest);
   $("#topName").textContent = S.club.name;
   $("#topSub").textContent = `Дивізіон ${S.division} · Сезон ${S.season} · Тур ${Math.min(S.round, 30)} · ${hhmm(loc(nowTs()))}${S.test.on ? " · перевірка" : ""}`;
+  $("#seasonChip").textContent = `Сезон ${S.season}`;
   $("#resMoney").textContent = fmt(S.money);
   $("#resGold").textContent = S.gold;
   const unread = S.feed.filter(f => !f.seen).length;
@@ -415,6 +416,7 @@ function renderHome(){
   S.feed.forEach(n => n.seen = true);
   $("#homeSeason").style.display = S.test.on && !done ? "" : "none";
   $("#homeLast").hidden = !S.lastRep;
+  $("#homeSeasonSum").hidden = !S.lastSeason;
   homeRewardBlock();
   homeClock();
   renderTop();
@@ -447,6 +449,7 @@ $("#homePlay").onclick = () => {
   S.test.on ? playInstant() : show("match");
 };
 $("#homeLast").onclick = () => showReport();
+$("#homeSeasonSum").onclick = () => seasonWindow();
 $("#homeSeason").onclick = () => simSeason();
 $("#homeSquad").onclick = () => show("team");
 $("#btnMail").onclick   = () => show("home");
@@ -992,9 +995,11 @@ function openPlayer(slot){
     }).join("")}</div>
     <div style="display:flex;gap:8px;margin-top:14px;flex-wrap:wrap">
       <button class="btn ghost sm" onclick="closeSheet()">Закрити</button>
+      <button class="btn ghost sm" id="sellBtn">Продати</button>
     </div>
     <p style="font-size:11px;color:var(--dim);margin:8px 0 0">Щоб поміняти гравців місцями — перетягни одного на іншого в розділі «Команда».</p>`;
   $$("#sheet .strip button").forEach(b => b.onclick = () => openPlayer(b.dataset.s));
+  $("#sellBtn").onclick = () => { closeSheet(); askSell(p) };
   if ($("#renewBtn")) $("#renewBtn").onclick = () => contractSheet(p, { title: `Продовження: ${p.name}`, renew: true });
   const fimg = $("#sheet .pc .face img"); if (fimg && face) kitFace(fimg, face, S.club.kit);   // футболка — у формі свого клубу
   openSheet();
@@ -1085,7 +1090,7 @@ function crowdNow(){
 function stadiumLine(){
   if (M.hm !== ME) return "";
   const f = stadiumFill(), c = crowdNow();
-  return `<p style="font-size:11.5px;color:${f.lost ? "var(--warn)" : "var(--dim)"};margin:6px 0 0">Стадіон: ${fmt(f.cap)} місць, заповнений на ${Math.round(f.fill * 100)} %. Підтримка трибун ×${c.toFixed(2).replace(".", ",")}${c > 1.05 ? " — більший стадіон дає більшу перевагу дому" : c < .95 ? " — стадіон замалий для дивізіону, дома допомагає менше" : ""}.${f.lost ? ` Ще ≈ ${fmt(f.lost)} вболівальників не потрапили — втрачено ≈ ${fmt(f.lostMoney)} за матч. Час думати про більший стадіон.` : ""}</p>`;
+  return `<p style="font-size:11.5px;color:${f.lost ? "var(--warn)" : "var(--dim)"};margin:6px 0 0">Стадіон: ${fmt(f.cap)} місць, прийшло ${fmt(Math.min(f.want, f.cap))} — заповнений на ${Math.round(f.fill * 100)} %. Підтримка трибун ×${c.toFixed(2).replace(".", ",")}${c > 1.05 ? " — більший стадіон дає більшу перевагу дому" : c < .95 ? " — стадіон замалий для дивізіону, дома допомагає менше" : ""}.${f.lost ? ` Ще ≈ ${fmt(f.lost)} вболівальників не потрапили — втрачено ≈ ${fmt(f.lostMoney)} за матч. Час думати про більший стадіон.` : ""}</p>`;
 }
 /* травма минає за тур із таким шансом — медцентр прискорює */
 /* свіжість за день і аптечки (рішення 29.09, прогони fatigue.js і greens.js) */
@@ -1124,6 +1129,10 @@ function buildingHint(id){
 }
 function renderInfra(){
   const d = S.division;
+  let ss = $("#stadStat");
+  if (!ss){ ss = document.createElement("div"); ss.id = "stadStat"; ss.className = "note"; ss.style.margin = "0 0 12px"; $("#bgrid").parentNode.insertBefore(ss, $("#bgrid")) }
+  { const f = stadiumFill(), came = Math.min(f.want, f.cap);
+    ss.innerHTML = `<h3>Стадіон: заповненість</h3><p>Місць ${fmt(f.cap)} · приходить ${fmt(came)} (${Math.round(f.fill * 100)} %)${f.lost ? ` · не вміщується ≈ ${fmt(f.lost)} уболівальників — це ≈ ${fmt(f.lostMoney)} за домашній матч. <b style="color:var(--gold-hi)">Розширення стадіону окупається.</b>` : " · уболівальники вміщаються — розширювати стадіон заради квитків не треба."}</p>`; }
   $("#infraSub").textContent = `Бюджет ${fmt(S.money)} · дохід за сезон ≈ ${fmt(incomeEstimate())}: квитки ${fmt(V.tickets(d, S.buildings.stadium))}, спонсор ${fmt(V.sponsor(d, S.buildings.commercial))}, атрибутика ${fmt(V.merch(d, S.buildings.commercial))}, призові на 8 місці ${fmt(V.prizeAt8(d))} · зарплати ${fmt(ME.wageBill())} зі стелі ${fmt(wageCapNow())}`;
   $("#bgrid").innerHTML = BUILDINGS.map(b => {
     const lvl = S.buildings[b.id], cost = V.buildCost(lvl + 1), why = canBuild(b.id);
@@ -1256,20 +1265,17 @@ function academySlots(lvl = S.buildings.academy){
 }
 /* Шанс на кількість зірок (1..6) залежно від рівня академії; між опорними рівнями — плавно.
    З 15-го рівня однозіркових немає, на 20-му — від трьох зірок. */
-const ACAD_ANCH = [
-  [1,  [60, 30,  9,  1,  .05, .005]],
-  [5,  [35, 38, 22,  4.5, .4, .02]],
-  [10, [12, 30, 43, 12, 2.5, .5]],
-  [15, [ 0, 15, 55, 23, 6,  1]],
-  [20, [ 0,  0, 55, 32, 10, 3]],
+/* Зірки в наборі академії за рівнем бази — ОСНОВА §13 (затверджено Марією): 1★ … 6★, % */
+const ACAD_BANDS = [
+  [4,  [60, 32,  8,  0,  0,   0]],
+  [9,  [30, 42, 23,  5,  0,   0]],
+  [14, [ 0, 38, 43, 17,  2,   0]],
+  [19, [ 0,  0, 50, 35, 13.5, 1.5]],
+  [20, [ 0,  0,  0, 60, 36,  4]],
 ];
 function starChances(lvl){
   lvl = Math.max(1, Math.min(20, lvl));
-  for (let i = 0; i < ACAD_ANCH.length - 1; i++){
-    const [a, wa] = ACAD_ANCH[i], [b, wb] = ACAD_ANCH[i + 1];
-    if (lvl <= b){ const t = (lvl - a) / (b - a); return wa.map((x, k) => x + (wb[k] - x) * t) }
-  }
-  return ACAD_ANCH[ACAD_ANCH.length - 1][1];
+  return ACAD_BANDS.find(([m]) => lvl <= m)[1];
 }
 /* ---- готовність, картки дня, інтенсив (рішення 29.09, прогін academy-path.js) ----
    Готовність 0–60: тренував — +1, не заходив — +2/3, картка +1…+3, «Інтенсив» за золото +10. В основу — з 60 і не раніше 17 років. */
@@ -1378,10 +1384,15 @@ function contractSheet(p, o){
     return openSheet();
   }
   const self = selfRole(p);
-  const role = o.role && ROLE_T[o.role] && roleMult(p, o.role) != null && !roleFull(p, o.role) ? o.role : (roleFull(p, self) ? "rot" : self);
+  /* роль, на яку гравець погодиться: його власна, а якщо місць немає — найближча нижча (дорожча зарплата), потім вища;
+     «відмовиться» (на 2 щаблі нижче) ніколи не пропонується. Якщо нічого не підходить — role = null, підписати не можна. */
+  const okRole = id => ROLE_T[id] && roleMult(p, id) != null && !roleFull(p, id);
+  const st0 = ROLE_T[self].tier;
+  const cands = Object.keys(ROLE_T).sort((a, b) => { const da = ROLE_T[a].tier - st0, db = ROLE_T[b].tier - st0; return (da <= 0 ? -da : 100 + da) - (db <= 0 ? -db : 100 + db) });
+  const role = o.role && okRole(o.role) ? o.role : (cands.find(okRole) || null);
   o.role = role;
-  const rm = roleMult(p, role);
-  const base = (o.baseWage ?? V.wageFor(p)) * rm;
+  const rm = role ? roleMult(p, role) : null;
+  const base = (o.baseWage ?? V.wageFor(p)) * (rm ?? 0);
   const today = o.today || 0;
   const oldWage = o.renew ? V.wageOf(p) : 0;
   const rolesUI = (p.age < 20 && !p.gk ? ["young", "bench", "rot", "main", "star"] : ["bench", "rot", "main", "star"]).map(id => {
@@ -1391,7 +1402,7 @@ function contractSheet(p, o){
   }).join("");
   const rows = [1, 2, 3, 4].map(y => {
     const w = Math.round(base * V.CONTRACT_K[y]);
-    const why = y > maxYears(p) ? `ветерану — щонайбільше ${maxYears(p)} ${yrs(maxYears(p))}` : S.money < today ? "бракує грошей" : ME.wageBill() - oldWage + w > wageCapNow() ? "понад стелю з.п." : "";
+    const why = !role ? "немає місця на його роль" : y > maxYears(p) ? `ветерану — щонайбільше ${maxYears(p)} ${yrs(maxYears(p))}` : S.money < today ? "бракує грошей" : ME.wageBill() - oldWage + w > wageCapNow() ? "понад стелю з.п." : "";
     return { y, w, why };
   });
   const until = y => o.renew ? S.season + y : S.season + y - 1;
@@ -1399,6 +1410,7 @@ function contractSheet(p, o){
     <div class="s">${p.pos()} · ${p.age} ${yrs(p.age)} · сила ${powView(p)} · ${starsView(p)}</div>
     ${lastCareer(p) ? `<div class="note"><h3>Останній сезон кар'єри</h3><p>Наприкінці цього сезону ${p.name} завершить кар'єру. Контракт — лише до кінця сезону.</p></div>` : ""}
     ${o.note || ""}
+    ${role ? "" : `<div class="note"><h3>${p.name} відмовляється</h3><p>Він вважає себе «${ROLE_T[self].name}», а місць на цю роль і нижчі, що він прийняв би, немає. Звільни місце або обери іншого гравця.</p></div>`}
     ${today ? `<div class="attrs" style="margin-top:6px;grid-template-columns:1fr">${o.costLines || ""}
       <div class="at"><span><b style="color:var(--gold-hi)">Сьогодні платиш</b></span><u style="width:auto;color:var(--gold-hi)">${fmt(today)}</u></div></div>` : ""}
     <div class="lab" style="margin-top:6px">Роль у команді · він вважає себе: ${ROLE_T[self].name}</div>
@@ -1407,7 +1419,7 @@ function contractSheet(p, o){
     <div class="lab" style="margin-top:10px">Строк контракту · коротший дорожчий за рік</div>
     <div class="cterms">${rows.map(r => `<button class="cterm" data-y="${r.y}" ${r.why ? "disabled" : ""}>
         <b>${r.y} ${yrs(r.y)}</b><i>до кінця сезону ${until(r.y)}</i>
-        <u>${fmt(r.w)} / сезон</u><s>${r.why || "разом " + fmt(r.w * r.y)}</s></button>`).join("")}</div>
+        <u>${role ? fmt(r.w) + " / сезон" : "—"}</u><s>${r.why || "разом " + fmt(r.w * r.y)}</s></button>`).join("")}</div>
     <p style="font-size:11.5px;color:var(--dim);margin:10px 0 0">Вільно в стелі зарплат: ${fmt(Math.max(0, wageCapNow() - ME.wageBill() + oldWage))} · бюджет ${fmt(S.money)}</p>
     <button class="btn ghost sm" style="margin-top:12px" onclick="closeSheet()">Скасувати</button>`;
   $$("#sheet [data-role]").forEach(b => b.onclick = () => { o.role = b.dataset.role; contractSheet(p, o) });
@@ -1595,7 +1607,7 @@ function renderMarket(){
     $$("#marketBody [data-deal]").forEach(b => b.onclick = () => openDeal(rows[+b.dataset.deal]));
     $$("#marketBody [data-scout]").forEach(b => b.onclick = () => scoutReport(rows[+b.dataset.scout].p, b.dataset.st, renderMarket));
   } else {
-    const mine = ME.bench;
+    const mine = squadAll().slice().sort((a, b) => b.power() - a.power());
     box.innerHTML = mine.length ? `<div class="mgrid">${mine.map((p, i) => `<div class="mcard">
         <div class="mtop">${avatar(p)}
           <div class="mn"><b>${p.name}</b><i>${p.pos()} · ${V.ROLE_UA[p.role]}</i>${stars(p)}</div>
@@ -1604,7 +1616,7 @@ function renderMarket(){
         </div>
         <div class="mmeta"><span>контракт до кінця сезону ${p.ct ?? "—"}</span><span>з.п. ${fmt(V.wageOf(p))}</span></div>
         <div class="mfoot"><div class="price"><b>+${fmt(sysPrice(p))}</b><i>90 % від ціни ${fmt(V.valueOf(p))}</i></div>
-          ${joinedNow(p) ? `<button class="btn ghost sm" disabled>з наступного сезону</button>` : `<button class="btn ghost sm" data-sell="${i}">Продати системі</button>`}</div>
+          ${canSell(p) ? `<button class="btn ghost sm" disabled title="${canSell(p)}">${joinedNow(p) ? "з наступного сезону" : "мінімум складу"}</button>` : `<button class="btn ghost sm" data-sell="${i}">Продати системі</button>`}</div>
       </div>`).join("")}</div>
       <p class="sub" style="margin:12px 0 0">Продаж системі — миттєво, за 90 % ціни, без комісії: щоб звільнити зарплату чи місце. Хто прийшов у клуб цього сезону, того можна продати лише з наступного. Продаж іншим клубам за свою ціну з'явиться разом із пропозиціями.</p>`
       : `<div class="mempty">У запасі нікого немає — продавати нема кого. Гравця з основи спершу перетягни на лаву в «Команді».</div>`;
@@ -1662,8 +1674,23 @@ function completeBuy(row, years, wage, role){
    Гравця, який прийшов у клуб цього сезону (куплений, вільний агент, навіть з академії),
    продати не можна до наступного сезону — рішення Марії 28.09. */
 const joinedNow = p => p.js === S.season;
+const SQUAD_MIN = 16, GK_MIN = 2;
+/* чому продати не можна (або null): щойно прийшов; лишиться менше 16 гравців; менше 2 воротарів */
+function canSell(p){
+  if (joinedNow(p)) return "прийшов у цьому сезоні — продати можна з наступного";
+  const all = squadAll();
+  if (all.length - 1 < SQUAD_MIN) return `у складі має бути щонайменше ${SQUAD_MIN} гравців`;
+  if (p.gk && all.filter(q => q.gk).length - 1 < GK_MIN) return `потрібно щонайменше ${GK_MIN} воротарі`;
+  return null;
+}
 const sysPrice = p => Math.round(V.valueOf(p) * .9);
 function askSell(p){
+  const why = canSell(p);
+  if (why){
+    $("#sheet").innerHTML = `<h2>Продати ${p.name}?</h2><div class="s">${p.pos()} · ${p.age} ${yrs(p.age)}</div>
+      <p style="font-size:13px;color:var(--muted);margin:0 0 14px">Не можна: ${why}.</p><button class="btn ghost sm" onclick="closeSheet()">Закрити</button>`;
+    return openSheet();
+  }
   $("#sheet").innerHTML = `<h2>Продати ${p.name}?</h2>
     <div class="s">${p.pos()} · ${p.age} ${yrs(p.age)} · сила ${Math.round(p.power())}</div>
     <p style="font-size:13px;color:var(--muted);margin:0 0 14px">Система купить його одразу за <b style="color:var(--gold-hi)">${fmt(sysPrice(p))}</b> — це 90 % ціни. Зарплата ${fmt(V.wageOf(p))} більше не списуватиметься. Скасувати не можна.</p>
@@ -1673,10 +1700,9 @@ function askSell(p){
   openSheet();
 }
 function sellSystem(p){
-  const bi = ME.bench.indexOf(p);
-  if (bi === -1 || joinedNow(p)) return;
-  const net = sysPrice(p);
-  ME.bench.splice(bi, 1);
+  if (canSell(p)) return;
+  const net = sysPrice(p), bi = ME.bench.indexOf(p);
+  if (bi >= 0) ME.bench.splice(bi, 1); else removePlayers([p]);          // з основи — на його місце найкращий із лави
   book("sales", net);
   /* гравець не зникає: система продає його далі за повну вартість — гроші з гри витікають, а не друкуються */
   p.ct = undefined; p.wg = undefined; p.js = undefined; p.paid = undefined; p.kn = null;
@@ -1895,12 +1921,12 @@ function renderShop(){
     return;
   }
   if (shopView === "buy"){
-    const crests = [...Array(CREST_COUNT).keys()].filter(i => !S.owned.crests.includes(i)).slice(0, 8);
+    const crests = [...IMG_IDS, ...Array(CREST_COUNT).keys()].filter(i => !S.owned.crests.includes(i)).slice(0, 8);
     const kits   = [...Array(KIT_COUNT).keys()].filter(i => !S.owned.kits.includes(i));
     box.innerHTML = `
       <div class="lab">Емблеми · ${CREST_PRICE} золота</div>
-      <div class="picks">${crests.map(i => `<button class="pickitem" data-buy="crest" data-i="${i}">
-        <svg viewBox="0 0 52 60">${crestSVG(i)}</svg></button>`).join("")}</div>
+      <div class="picks">${crests.map(i => `<button class="pickitem ${IMG_CRESTS[i] ? "big" : ""}" data-buy="crest" data-i="${i}">
+        <svg viewBox="0 0 52 60">${crestSVG(i, S.club.name, true)}</svg></button>`).join("")}</div>
       <div class="lab" style="margin-top:16px">Форми · ${KIT_PRICE} золота</div>
       <div class="picks">${kits.map(i => `<button class="pickitem" data-buy="kit" data-i="${i}">
         <svg viewBox="0 0 40 46">${kitSVG(i)}</svg></button>`).join("")}</div>
@@ -1910,8 +1936,8 @@ function renderShop(){
   } else {
     box.innerHTML = `
       <div class="lab">Мої емблеми · тап, щоб вдягнути</div>
-      <div class="picks">${S.owned.crests.map(i => `<button class="pickitem ${i === S.club.crest ? "on" : ""}" data-wear="crest" data-i="${i}">
-        <svg viewBox="0 0 52 60">${crestSVG(i)}</svg></button>`).join("")}</div>
+      <div class="picks">${S.owned.crests.map(i => `<button class="pickitem ${IMG_CRESTS[i] ? "big" : ""} ${i === S.club.crest ? "on" : ""}" data-wear="crest" data-i="${i}">
+        <svg viewBox="0 0 52 60">${crestSVG(i, S.club.name, true)}</svg></button>`).join("")}</div>
       <div class="lab" style="margin-top:16px">Мої форми</div>
       <div class="picks">${S.owned.kits.map(i => `<button class="pickitem ${i === S.club.kit ? "on" : ""}" data-wear="kit" data-i="${i}">
         <svg viewBox="0 0 40 46">${kitSVG(i)}</svg></button>`).join("")}</div>`;
@@ -2443,8 +2469,8 @@ function clockTick(){
     if (autos && !S.test.on) toast(`Поки тебе не було, зіграно ${autos} ${pl(autos, "матч", "матчі", "матчів")} — результати в новинах`);
     renderTop(); if (page === "home") renderHome();
     save();
-    if (rolled) seasonWindow();
   }
+  showPendingSeason();
   const sec = Math.floor(now / 1000);
   if (sec !== lastSec){ lastSec = sec; renderTop(); if (page === "home") homeClock() }
 }
@@ -2876,15 +2902,10 @@ function fillSlot(role){
   const gk = role === "gk";
   const fit = p => gk ? (p.gk ? p.power() : -1) : (p.gk ? -1 : p.powerIn(role));
   const out = p => { ME.bench.splice(ME.bench.indexOf(p), 1); return p };
-  const ac = S.academy.candidates.filter(c => (isReadyC(c) || c.p.age >= 18) && fit(c.p) >= 0).sort((a, b) => fit(b.p) - fit(a.p))[0];
-  if (ac){
-    signAcademy(ac, 1, Math.round(V.wageFor(ac.p) * V.CONTRACT_K[1]));
-    addNews("eye", `${ac.p.name} з академії закрив порожнє місце в складі (контракт на 1 рік).`);
-    return got(out(ac.p), 0);
-  }
+  /* рішення Марії 30.09: вихованці в основу лише вручну; порожні місця закриває найдешевший вільний агент */
   const room = wageCapNow() - ME.wageBill();
-  const best = [...faRows().filter(r => !r.fa.mine), ...pool()]
-    .filter(r => fit(r.p) >= 0 && tierOf(r.p).ok)
+  const best = faRows().filter(r => !r.fa.mine)
+    .filter(r => fit(r.p) >= 0)
     .map(r => ({ r, k: dealOf(r), w: Math.round(dealOf(r).wage * V.CONTRACT_K[1]) }))
     .filter(x => x.k.total <= S.money && x.w <= room)
     .sort((a, b) => a.k.total - b.k.total || a.w - b.w)[0];
@@ -3037,19 +3058,26 @@ function seasonRollover(){
   const sum = endOfSeason(was);
   ageAcademyOneSeason();
   S.lastSeason = { season: S.season - 1, pos, was, now: S.division, prize, gold, rec, fin: S.fin, ...sum, playoff: po && po.text,
-    expiring: squadAll().filter(p => p.ct === S.season).map(p => p.name), intake: S.academy.offers.length, cup: cupSum };
+    expiring: squadAll().filter(p => p.ct === S.season).map(p => p.name), intake: S.academy.offers.length, cup: cupSum, seen: false };
   S.fin = FIN0();
   newCup();
   M.hm = null;
   return true;
 }
 /* Вікно кінця сезону: місце, призові, гроші, ріст, кар'єри, контракти, набір в академію */
+/* підсумок сезону показується, коли нема відкритих вікон (після нагороди за вхід тощо) — не губиться */
+function showPendingSeason(){
+  const L = S.lastSeason;
+  if (!L || L.seen !== false || $("#modal").classList.contains("on")) return;
+  seasonWindow();
+}
 function seasonWindow(){
   const L = S.lastSeason; if (!L) return;
+  L.seen = true;
   const f = L.fin, inc = f.tickets + f.sponsor + (f.merch || 0) + (f.match || 0) + f.prize + (f.cup || 0) + f.sales + (f.login || 0) + (f.gold || 0), out = f.wages + f.upkeep + f.build + f.buys;
   const moved = L.now < L.was ? `Підвищення — тепер Дивізіон ${L.now}!` : L.now > L.was ? `Виліт — тепер Дивізіон ${L.now}.` : `Лишаєшся в Дивізіоні ${L.now}.`;
   const line = (t, v, plus) => `<div class="at"><span>${t}</span><u style="width:auto">${plus ? "+" : "−"}${fmt(v)}</u></div>`;
-  $("#sheet").innerHTML = `<h2>Сезон ${L.season}: ${L.pos} місце</h2>
+  $("#sheet").innerHTML = `<h2>Сезон ${L.season} завершено: ${L.pos} місце з 16</h2>
     <div class="s">${L.rec.w} ${pl(L.rec.w, "перемога", "перемоги", "перемог")} · ${L.rec.d} ${pl(L.rec.d, "нічия", "нічиї", "нічиїх")} · ${L.rec.l} ${pl(L.rec.l, "поразка", "поразки", "поразок")} · м'ячі ${L.rec.gf}:${L.rec.ga} · ${L.rec.p} ${pl(L.rec.p, "очко", "очки", "очок")}</div>
     ${L.playoff ? `<p style="font-size:12.5px;color:var(--muted);margin:0 0 6px">${L.playoff}</p>` : ""}
     ${L.cup ? `<p style="font-size:12.5px;color:var(--muted);margin:0 0 6px">${L.cup}</p>` : ""}
