@@ -8,9 +8,9 @@ const $$ = s => [...document.querySelectorAll(s)];
 const fmt = n => Math.round(n).toLocaleString("uk-UA").replace(/,/g, " ");
 /* vert6: новий розподіл доходу, зарплати, піраміда. Старі збереження лишаються в пам'яті
    телефону, але новій версії не підходять — клуб створюється заново. */
-const SAVE_KEY = "vert8";
+const SAVE_KEY = "vert9";
 /* номер версії видно внизу меню — щоб на телефоні одразу було ясно, що відкрилось */
-const VERSION = "v21";
+const VERSION = "v22";
 
 /* =======================================================================
    ЕМБЛЕМИ І ФОРМИ (малюються кодом, у кожного клуба свої)
@@ -125,7 +125,7 @@ function buildWorld(keepMe){
   while (rivals.length < 15) rivals.push("Клуб " + (rivals.length + 1));
   /* спершу суперники, потім твоя команда: тоді суперники однакові і посеред гри,
      і після перезапуску (твій склад при завантаженні все одно береться зі збереження) */
-  const rivalTeams = rivals.map(n => new V.Team(n, base * V.rf(0.82, 1.1)));
+  const rivalTeams = rivals.map(n => new V.Team(n, base * V.rf(0.82, 1.1), false, V.pick(V.FORM_NAMES)));
   if (!keepMe) ME = new V.Team(mine, base * 0.95, true);
   /* кого вже купили в суперників цього сезону — після перезапуску вони в них не з'являються */
   if (S.taken && S.taken.season === S.season)
@@ -416,8 +416,27 @@ function prow(p, slot, isSub){
     <div class="pv"><b>${Math.round(p.power())}</b><div class="frbar"><i style="width:${fr}%"></i></div></div></div>`;
 }
 /* Розташування на полі: атака вправо, ворота зліва; координати в % ширини/висоти. */
-const PITCH_XY = { GK:[7,50], RB:[25,88], CB1:[21,63], CB2:[21,37], LB:[25,12],
-                   DM:[40,50], CM:[58,28], AM:[58,72], RW:[82,86], ST:[89,50], LW:[82,14] };
+const FORM_XY = {
+  "4-3-3":   { GK:[7,50], RB:[25,88], CB1:[21,63], CB2:[21,37], LB:[25,12], DM:[40,50], CM:[58,28], AM:[58,72], RW:[82,86], ST:[89,50], LW:[82,14] },
+  "4-4-2":   { GK:[7,50], RB:[25,88], CB1:[21,63], CB2:[21,37], LB:[25,12], RM:[58,88], CM1:[52,62], CM2:[52,38], LM:[58,12], ST:[86,63], ST2:[86,37] },
+  "3-5-2":   { GK:[7,50], CB1:[22,74], CB2:[19,50], CB3:[22,26], RWB:[50,90], LWB:[50,10], DM:[38,50], CM:[58,64], AM:[64,36], ST:[87,62], ST2:[87,38] },
+  "4-5-1":   { GK:[7,50], RB:[25,88], CB1:[21,63], CB2:[21,37], LB:[25,12], RM:[62,88], CM1:[56,67], DM:[40,50], CM2:[56,33], LM:[62,12], ST:[89,50] },
+  "4-2-3-1": { GK:[7,50], RB:[25,88], CB1:[21,63], CB2:[21,37], LB:[25,12], DM:[40,66], DM2:[40,34], RW:[72,86], AM:[66,50], LW:[72,14], ST:[89,50] },
+  "5-3-2":   { GK:[7,50], RB:[32,90], CB1:[21,72], CB2:[19,50], CB3:[21,28], LB:[32,10], CM1:[52,70], DM:[42,50], CM2:[52,30], ST:[86,62], ST2:[86,38] },
+  "3-4-3":   { GK:[7,50], CB1:[22,74], CB2:[19,50], CB3:[22,26], RWB:[52,90], CM1:[48,62], CM2:[48,38], LWB:[52,10], RW:[80,84], ST:[89,50], LW:[80,16] },
+};
+const mySlots = () => ME.slots();
+const PITCH_XY_OF = s => (FORM_XY[ME.form] || FORM_XY["4-3-3"])[s] || [50, 50];
+/* вибір схеми — список у підготовці до матчу й у «Команді»; під час матчу — теж, і це дія менеджера */
+function syncFormSel(){ $$(".formsel").forEach(el => { if (!el.options.length) el.innerHTML = V.FORM_NAMES.map(f => `<option>${f}</option>`).join(""); el.value = ME.form }) }
+function changeForm(f){
+  if (!V.FORMS[f] || f === ME.form) return;
+  ME.setForm(f);
+  if (M.live){ act("схему"); initDots(); say(M.min, `Тренер перебудовує команду на ${f}.`, "warn"); renderBench() }
+  else { bestLineup(); markLineup(); toast(`Схема ${f}: поставили найкращий склад під неї — з основи й лави`) }   // під час матчу — ті самі десятеро, без замін
+  save(); renderTeamIfOpen();
+}
+document.addEventListener("change", e => { if (e.target.classList && e.target.classList.contains("formsel")) changeForm(e.target.value) });
 const PITCH_LINES = `<svg class="ln" viewBox="0 0 105 68" preserveAspectRatio="none">
   <rect x="1.5" y="1.5" width="102" height="65"/><line x1="52.5" y1="1.5" x2="52.5" y2="66.5"/>
   <circle cx="52.5" cy="34" r="8"/><rect x="1.5" y="18" width="14" height="32"/>
@@ -427,7 +446,7 @@ const PITCH_LINES = `<svg class="ln" viewBox="0 0 105 68" preserveAspectRatio="n
 function token(p, slot, onPitch){
   const fp = onPitch ? famPct(p, slot) : 100, off = fp < 100;
   const sur = p.name.split(" ").slice(-1)[0];
-  const pos = onPitch ? `left:${PITCH_XY[slot][0]}%;top:${PITCH_XY[slot][1]}%` : "";
+  const pos = onPitch ? `left:${PITCH_XY_OF(slot)[0]}%;top:${PITCH_XY_OF(slot)[1]}%` : "";
   const warn = lastCareer(p) ? "кінець кар'єри" : lastYear(p) ? "кінець контракту" : "";
   const pw = Math.round(onPitch ? p.fitIn(slot) : p.power());
   const hurt = p.out > 0 || p.ban > 0, fr = Math.round(p.fresh * 100);
@@ -440,7 +459,8 @@ function token(p, slot, onPitch){
 const pitchToken = (p, slot) => token(p, slot, true);
 /* склад: поле + лава кружечками; однаковий у «Команді» й у підготовці до матчу */
 function renderLineup(pitchEl, benchEl){
-  pitchEl.innerHTML = `${PITCH_LINES}<div class="fm">4-3-3</div>` + V.SLOTS.map(s => pitchToken(s === "GK" ? ME.gk : ME.xi[s], s)).join("");
+  pitchEl.innerHTML = `${PITCH_LINES}<div class="fm">${ME.form}</div>` + mySlots().map(s => pitchToken(s === "GK" ? ME.gk : ME.xi[s], s)).join("");
+  syncFormSel();
   benchEl.innerHTML = ME.bench.map((p, i) => token(p, "B" + i, false)).join("");
   $$(".lustat").forEach(el => el.textContent = lineupMine()
     ? "склад ваш — автовибір його не чіпає (лише травмованих замінить)"
@@ -459,7 +479,7 @@ const maxYears = p => lastCareer(p) || p.age >= 32 ? 1 : p.age >= 30 ? 2 : 4;
 /* Демо-обличчя: поки воно одне, його отримує один гравець і живе з ним, а не зі слотом. */
 function ensureDemoFace(){
   const all = [ME.gk, ...Object.values(ME.xi), ...ME.bench];
-  if (!all.some(p => p.face)) ME.xi.ST.face = "img/faces/f01.jpg";
+  if (!all.some(p => p.face)) ME.striker().face = "img/faces/f01.jpg";
 }
 function renderTeam(){
   ensureDemoFace();
@@ -487,7 +507,7 @@ function renderTrain(){
    ======================================================================= */
 const matchBoost = p => ageF(p) < 20 ? 3 : 1;      // молоді ростуть від матчів утричі швидше
 const trainedToday = () => S.trained === String(dayNo());
-function squadAll(){ return [ME.gk, ...Object.values(ME.xi), ...ME.bench] }
+function squadAll(){ return [ME.gk, ...ME.slots().slice(1).map(s => ME.xi[s]), ...ME.bench] }
 function trainToday(quiet){
   if (trainedToday()) return;
   const k = V.kBase(S.buildings.training);
@@ -608,7 +628,7 @@ function markLineup(){ S.lineupAt = dayNo() }
 const lineupMine = () => S.lineupAt != null && dayNo() >= S.lineupAt && dayNo() - S.lineupAt <= 2;
 /* найкращий склад: спершу жадібно найкращі пари «гравець — місце», далі обміни, доки стає краще */
 function bestLineup(){
-  const all = squadAll(), fs = V.SLOTS.slice(1), ok = all.filter(canPlay);
+  const all = squadAll(), fs = mySlots().slice(1), ok = all.filter(canPlay);
   const gk = ok.filter(p => p.gk).sort((a, b) => fitPick(b, "GK") - fitPick(a, "GK"))[0] || ME.gk;
   const field = ok.filter(p => !p.gk), xi = {}, used = new Set();
   const pairs = []; field.forEach(p => fs.forEach(s => pairs.push([fitPick(p, s), p, s])));
@@ -637,7 +657,7 @@ function bestLineup(){
 function autoLineup(){
   if (lineupMine()){
     const ch = [];
-    V.SLOTS.forEach(s => {
+    mySlots().forEach(s => {
       const p = getP(s); if (canPlay(p)) return;
       const b = ME.bench.map((q, i) => [q, i]).filter(([q]) => canPlay(q) && slotOK(s, q))
         .sort((x, y) => fitNow(y[0], s) - fitNow(x[0], s))[0];
@@ -844,7 +864,7 @@ function openPlayer(slot){
     <div class="note"><h3>${V.ROLE_UA[p.role]}</h3><p>${growthText(p)}</p>
       <p style="margin-top:6px">${contractText(p)} Оціночна вартість ${fmt(V.valueOf(p))}.</p>
       ${p.ct != null && p.ct <= S.season && !lastCareer(p) ? `<button class="btn sm" id="renewBtn" style="margin-top:8px">Продовжити контракт</button>` : ""}</div>
-    <div class="strip">${V.SLOTS.map(s => {
+    <div class="strip">${mySlots().map(s => {
       const q = getP(s), f = q.face;
       return `<button data-s="${s}" class="${s === slot ? "on" : ""}" title="${q.name}">
         ${f ? `<img src="${f}" alt="">` : SILHOUETTE}<u>${V.SLOT_POS[s]}</u></button>`;
@@ -1807,6 +1827,9 @@ function finishQueueNow(){ S.queue.forEach(q => { q.endAt = Date.now() }); proce
 /* =======================================================================
    МАТЧ
    ======================================================================= */
+/* точки на полі матчу: схема кожної команди (гості — дзеркально) */
+const dotsOf = (t, away) => t.slots().map(s => { const [x, y] = (FORM_XY[t.form] || FORM_XY["4-3-3"])[s] || [50, 50];
+  const hx = .05 + x * .0047, hy = 1 - y / 100; return away ? [1 - hx, 1 - hy] : [hx, hy] });
 const M = { live:false, min:0, ep:0, N:70, ph:.5, timer:null, half:1, speed:1, over:false, hm:null, aw:null };
 const PRESS = [["Низ",.85],["Сер",1],["Вис",1.18]];
 const LINE  = [["Низ",.8],["Сер",1],["Вис",1.2]];
@@ -1827,7 +1850,7 @@ function openMatch(){
   if (M.day !== `${S.season}-${S.round}`){ M.day = `${S.season}-${S.round}`; autoLineup() }   // перед кожним матчем (і другим у суботу)
   M.hm.reset(); M.aw.reset(); setMorale();
   M.live = false; M.min = 0; M.ep = 0; M.half = 1; M.over = false; M.forced = false; M.N = V.ri(64, 76);
-  const [a] = M.hm.zMid(), [b] = M.aw.zMid(); M.ph = a / (a + b);
+  M.ph = V.possession(M.hm, M.aw);
   $("#mh").textContent = M.hm.name; $("#ma").textContent = M.aw.name;
   $("#mgh").textContent = 0; $("#mga").textContent = 0;
   $("#mclock").className = "clock paused"; $("#mclock").textContent = "до стартового свистка";
@@ -1851,6 +1874,7 @@ function renderSpeed(){
   $("#spd").parentElement.style.display = S.test.on ? "" : "none";   // у справжній грі швидкість одна для обох
 }
 function renderCtrl(){
+  syncFormSel();
   $("#pressCtrl").innerHTML = PRESS.map(([n, v]) => `<button class="${ME.press === v ? "on" : ""}" data-v="${v}">${n}</button>`).join("");
   $("#lineCtrl").innerHTML  = LINE.map(([n, v])  => `<button class="${ME.line === v ? "on" : ""}" data-v="${v}">${n}</button>`).join("");
   $$("#pressCtrl button").forEach(b => b.onclick = () => { ME.press = +b.dataset.v; act("пресинг"); renderCtrl() });
@@ -1887,7 +1911,7 @@ function askSub(i){
   $("#sheet").innerHTML = `<h2>Заміна</h2>
     <div class="s">виходить ${inP.pos()} ${inP.name} · сила ${Math.round(inP.power())}</div>
     ${inP.gk ? `<p style="font-size:11.5px;color:var(--dim);margin:0 0 8px">Воротар може замінити лише воротаря.</p>` : ""}
-    <div class="plist">${(inP.gk ? ["GK"] : V.SLOTS.slice(1)).map(s => {
+    <div class="plist">${(inP.gk ? ["GK"] : mySlots().slice(1)).map(s => {
       const p = getP(s), fit = Math.round(inP.fitIn(s));
       return `<div class="p" data-s="${s}"><div class="pos">${V.SLOT_POS[s]}</div>
         <div class="pn"><b>${p.name}</b><i>${V.SLOT_UA[s]} · ${p.injured ? '<span style="color:var(--bad)">травмований у цьому матчі</span> · ' : ""}свіжість ${Math.round(p.fresh * 100)} %</i></div>
@@ -1947,8 +1971,8 @@ let homeDots = [], awayDots = [];
 function initDots(){
   const mk = ([x, y], i) => ({ bx:x, by:y, x, y, fx:x, fy:y, tx:x, ty:y,
                                delay: V.rf(0, .22), phase: V.rf(0, 6.28) });
-  homeDots = HF_BASE.map(mk);
-  awayDots = AF_BASE.map(mk);
+  homeDots = (M.hm ? dotsOf(M.hm, false) : HF_BASE).map(mk);
+  awayDots = (M.aw ? dotsOf(M.aw, true) : AF_BASE).map(mk);
   ballFrom = { x:.5, y:.5 }; ballPath = [{ x:.5, y:.5 }];
   moveT0 = performance.now(); moveDur = 4300;
 }
@@ -2434,8 +2458,8 @@ function removePlayers(gone){
   };
   /* воротар лише з воротарів лави; польового у ворота не ставимо */
   if (gone.includes(ME.gk)) ME.gk = take(q => q.gk ? q.power() : -Infinity, true) || fillSlot("gk");
-  V.SPECS.forEach(([slot, role]) => {
-    if (gone.includes(ME.xi[slot])) ME.xi[slot] = take(q => q.gk ? -Infinity : q.fitIn(slot), true) || fillSlot(role);
+  mySlots().slice(1).forEach(slot => {
+    if (gone.includes(ME.xi[slot])) ME.xi[slot] = take(q => q.gk ? -Infinity : q.fitIn(slot), true) || fillSlot(V.SLOT_ROLE[slot]);
   });
   if (!ME.bench.some(p => p.gk)) ME.bench.push(fillSlot("gk"));
   while (squadAll().length < 16) ME.bench.push(fillSlot(V.pick(Object.keys(V.ROLES))));
@@ -2583,7 +2607,7 @@ function addNews(icon, text){
 }
 const sp = p => ({ n:p.name, r:p.role, g:p.gk, a:p.age, at:p.attrs, po:p.pot, gl:p.glass, pr:p.prof, fo:p.form, wp:p.wagePrem, fc:p.face, rt:p.ret, ss:p.ss, ct:p.ct, wg:p.wg, sr:p.sr, rg:p.pr, ap:p.ap, kn:p.kn, pd:p.paid, js:p.js, sd:p.side, fr:p.fresh, ou:p.out, bn:p.ban, ij:p.inj, rl:p.rl, mr:p.mr, gp:p.gp, gt:p.gt, wo:p.wo, wn:p.warned, rd:p.rd, cd:p.cd, ab:p.abl, ap2:p.abp, it:p.it });
 function serial(t){
-  return { gk: sp(t.gk), xi: Object.fromEntries(Object.entries(t.xi).map(([k, p]) => [k, sp(p)])), bench: t.bench.map(sp) };
+  return { form: t.form, gk: sp(t.gk), xi: Object.fromEntries(t.slots().slice(1).map(k => [k, sp(t.xi[k])])), bench: t.bench.map(sp) };
 }
 function mkPlayer(d){
   const p = new V.P(d.n, d.r, 25, d.g, d.a); p.attrs = d.at; p.pot = d.po;
@@ -2602,6 +2626,7 @@ function mkPlayer(d){
 }
 function hydrate(o, t){
   t.gk = mkPlayer(o.gk); t.bench = o.bench.map(mkPlayer);
+  t.form = V.FORMS[o.form] ? o.form : "4-3-3"; t.xi = {};
   /* старе збереження без флангів: фланговий в основі — на своєму фланзі */
   Object.entries(o.xi).forEach(([k, d]) => { const p = t.xi[k] = mkPlayer(d); if (d.sd === undefined && V.SLOT_SIDE[k] && V.isFlank(p.role)) p.side = V.SLOT_SIDE[k] });
 }

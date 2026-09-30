@@ -365,6 +365,8 @@ tr.down td:first-child{box-shadow:inset 2px 0 0 var(--bad)}
 .kits .btn{font-size:12px}
 .lbtns{display:flex;flex-wrap:wrap;align-items:center;gap:6px 8px;margin:0 0 8px}
 .lbtns .btn{padding:6px 10px;font-size:11.5px}
+.formlab{display:flex;align-items:center;gap:6px;font-size:11px;font-weight:700;letter-spacing:.08em;color:var(--muted);text-transform:uppercase}
+.formsel{padding:6px 8px;border-radius:9px;background:rgba(17,24,35,.85);border:1px solid var(--hair);color:var(--gold-hi);font:700 12.5px/1 inherit;font-family:inherit}
 .lustat{font-size:10.5px;color:var(--dim)}
 .lbench{display:flex;flex-wrap:wrap;gap:10px 4px;padding:10px 6px;border-radius:14px;
         background:rgba(17,24,35,.55);border:1px solid var(--line-soft)}
@@ -687,7 +689,7 @@ tr.po td:first-child{box-shadow:inset 2px 0 0 var(--gold)}
           <div class="wakewarn" id="wakewarn" hidden>Екран може гаснути: телефон не дозволив тримати його увімкненим. Збільш у налаштуваннях телефону час до згасання екрана.</div>
           <div id="mPrep">
             <div class="lab">Склад на матч · перетягни гравця на іншого, щоб поміняти · тап — картка · з лави — затримай палець</div>
-            <div class="lbtns"><button class="btn ghost sm" data-lu="best">Найкращий склад</button><button class="btn ghost sm" data-lu="ok">Підтвердити склад</button><span class="lustat"></span></div>
+            <div class="lbtns"><label class="formlab">Схема <select class="formsel"></select></label><button class="btn ghost sm" data-lu="best">Найкращий склад</button><button class="btn ghost sm" data-lu="ok">Підтвердити склад</button><span class="lustat"></span></div>
             <div class="lineup">
               <div class="pitchbox lpitch" id="mPitch"></div>
               <div class="lbench" id="mBench"></div>
@@ -696,6 +698,7 @@ tr.po td:first-child{box-shadow:inset 2px 0 0 var(--gold)}
           <canvas id="pitch" width="900" height="520"></canvas>
           <div class="ctrlrow live">
             <div><div class="lab">Швидкість</div><div class="ctrl" id="spd"></div></div>
+            <div><div class="lab">Схема</div><div class="ctrl"><select class="formsel" id="formLive"></select></div></div>
             <div><div class="lab">Пресинг</div><div class="ctrl" id="pressCtrl"></div></div>
             <div><div class="lab">Лінія оборони</div><div class="ctrl" id="lineCtrl"></div></div>
           </div>
@@ -719,7 +722,7 @@ tr.po td:first-child{box-shadow:inset 2px 0 0 var(--gold)}
       <h2 class="t">Команда</h2>
       <p class="sub" id="teamSub">—</p>
       <div class="lab">Тап — картка гравця · перетягни на іншого — поміняти місцями · з лави — затримай палець</div>
-      <div class="lbtns"><button class="btn ghost sm" data-lu="best">Найкращий склад</button><button class="btn ghost sm" data-lu="ok">Підтвердити склад</button><span class="lustat"></span></div>
+      <div class="lbtns"><label class="formlab">Схема <select class="formsel"></select></label><button class="btn ghost sm" data-lu="best">Найкращий склад</button><button class="btn ghost sm" data-lu="ok">Підтвердити склад</button><span class="lustat"></span></div>
       <div class="lineup">
         <div class="pitchbox lpitch" id="teamPitch"></div>
         <div class="lbench" id="subs"></div>

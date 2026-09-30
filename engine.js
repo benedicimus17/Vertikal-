@@ -39,15 +39,18 @@ const ROLE_POS={cb_destroyer:"ЦЗ",cb_builder:"ЦЗ",fb_def:"КЗ",fb_wing:"К�
   w_fast:"ВНГ",w_inv:"ВНГ",w_cross:"ВНГ",st_target:"НП",st_fast:"НП",st_false9:"НП",gk:"ВР"};
 
 /* позиція кожного слота складу + які ролі туди пасують природно */
-const SLOT_POS={GK:"ВР",RB:"КЗ",CB1:"ЦЗ",CB2:"ЦЗ",LB:"КЗ",DM:"ОП",CM:"ЦП",AM:"АП",RW:"ВНГ",ST:"НП",LW:"ВНГ"};
+const SLOT_POS={GK:"ВР",RB:"КЗ",CB1:"ЦЗ",CB2:"ЦЗ",LB:"КЗ",DM:"ОП",CM:"ЦП",AM:"АП",RW:"ВНГ",ST:"НП",LW:"ВНГ",
+  CB3:"ЦЗ",RWB:"КЗ",LWB:"КЗ",DM2:"ОП",CM1:"ЦП",CM2:"ЦП",RM:"ВНГ",LM:"ВНГ",ST2:"НП"};
 const SLOT_UA={GK:"воротар",RB:"правий захисник",CB1:"центральний захисник",CB2:"центральний захисник",
   LB:"лівий захисник",DM:"опорний півзахисник",CM:"центральний півзахисник",AM:"атакувальний півзахисник",
-  RW:"правий вінгер",ST:"нападник",LW:"лівий вінгер"};
+  RW:"правий вінгер",ST:"нападник",LW:"лівий вінгер",
+  CB3:"центральний захисник",RWB:"правий фланговий захисник",LWB:"лівий фланговий захисник",DM2:"опорний півзахисник",
+  CM1:"центральний півзахисник",CM2:"центральний півзахисник",RM:"правий півзахисник",LM:"лівий півзахисник",ST2:"нападник"};
 
 /* Як гравець знає позицію (рішення 29.09, прогін vertical/sim/positions.js): своя 100 % · своя, але інший фланг 95 % ·
    сусідня 92 % · через одну 85 % · чужа 70 % · воротар у полі чи польовий у воротах 30 %.
    Сусідні позиції: ЦЗ–ОП, ЦЗ–КЗ, КЗ–ВНГ, ОП–ЦП, ЦП–АП, АП–НП, АП–ВНГ, ВНГ–НП. У кожного флангового свій фланг. */
-const SLOT_SIDE={RB:"R",LB:"L",RW:"R",LW:"L"};
+const SLOT_SIDE={RB:"R",LB:"L",RW:"R",LW:"L",RWB:"R",LWB:"L",RM:"R",LM:"L"};
 const POS_EDGES=[["ЦЗ","ОП"],["ЦЗ","КЗ"],["КЗ","ВНГ"],["ОП","ЦП"],["ЦП","АП"],["АП","НП"],["АП","ВНГ"],["ВНГ","НП"]];
 function posDist(a,b){
   if(a===b) return 0;
@@ -275,29 +278,72 @@ const SPECS=[["RB","fb_def"],["CB1","cb_destroyer"],["CB2","cb_builder"],["LB","
              ["DM","dm_breaker"],["CM","cm_b2b"],["AM","cm_play"],
              ["RW","w_fast"],["ST","st_fast"],["LW","w_inv"]];
 const BENCHR=["cb_builder","fb_wing","dm_deep","am_ten","w_cross","st_target","st_false9"];
-const SLOTS=["GK","RB","CB1","CB2","LB","DM","CM","AM","RW","ST","LW"];
-const SLOT_ROLE=Object.fromEntries(SPECS);
+const SLOTS=["GK","RB","CB1","CB2","LB","DM","CM","AM","RW","ST","LW"];   // 4-3-3 — стартова схема
+/* роль місця: за нею рахується сила гравця на цьому місці і створюються гравці суперника під схему */
+const SLOT_ROLE={...Object.fromEntries(SPECS),
+  CB3:"cb_destroyer",RWB:"fb_wing",LWB:"fb_wing",DM2:"dm_deep",CM1:"cm_b2b",CM2:"cm_play",RM:"w_cross",LM:"w_cross",ST2:"st_target"};
+
+/* ---------- схеми (v22, рішення 30.09) ----------
+   Кожна схема — 10 місць у полі. Кожне місце має вагу в лініях поля: def — оборона, mid — центр (володіння м'ячем),
+   att — атака, L/R — фланги. Сила лінії = середня сила її гравців (з вагами) × поправка за кількість людей у лінії:
+   більше людей — сильніша лінія, але з убутною віддачею (FORM_K). Звідси характер схем: 4-5-1 тримає м'яч,
+   3-4-3 атакує й ризикує, 5-3-2 закривається. Прогін: vertical/sim/schemes.js. */
+const FORMS={
+  "4-3-3":  ["RB","CB1","CB2","LB","DM","CM","AM","RW","ST","LW"],
+  "4-4-2":  ["RB","CB1","CB2","LB","RM","CM1","CM2","LM","ST","ST2"],
+  "3-5-2":  ["CB1","CB2","CB3","RWB","LWB","DM","CM","AM","ST","ST2"],
+  "4-5-1":  ["RB","CB1","CB2","LB","RM","CM1","DM","CM2","LM","ST"],
+  "4-2-3-1":["RB","CB1","CB2","LB","DM","DM2","RW","AM","LW","ST"],
+  "5-3-2":  ["RB","CB1","CB2","CB3","LB","CM1","DM","CM2","ST","ST2"],
+  "3-4-3":  ["CB1","CB2","CB3","RWB","LWB","CM1","CM2","RW","ST","LW"],
+};
+const FORM_NAMES=Object.keys(FORMS);
+const ZW={
+  RB:{def:1,R:1}, LB:{def:1,L:1}, CB1:{def:1}, CB2:{def:1}, CB3:{def:1},
+  RWB:{def:.6,mid:.3,att:.2,R:1}, LWB:{def:.6,mid:.3,att:.2,L:1},
+  DM:{mid:1,def:.3}, DM2:{mid:1,def:.3}, CM:{mid:1}, CM1:{mid:1}, CM2:{mid:1},
+  AM:{mid:.6,att:.6}, RM:{mid:.6,att:.2,R:1}, LM:{mid:.6,att:.2,L:1},
+  RW:{att:1,R:.8}, LW:{att:1,L:.8}, ST:{att:1}, ST2:{att:1},
+};
+/* поправка за кількість: (вага лінії / вага в 4-3-3) ^ степінь; 4-3-3 = 1 */
+const FORM_K={def:.5,mid:.2,att:.45,L:.1,R:.1,q:.2};   // підібрано прогоном schemes.js (30.09)
+/* вага лінії «в середньому по схемах» — поправка за кількість в середньому дорівнює 1, голів не меншає */
+const ZREF={}; ["def","mid","att","L","R"].forEach(z=>{ZREF[z]=Object.values(FORMS).reduce((s,f)=>s+f.reduce((t,sl)=>t+((ZW[sl]||{})[z]||0),0),0)/Object.keys(FORMS).length});
+/* володіння: частка атак за силою центру; q < 1 стискає перевагу (центр не рахується двічі на повну) */
+function possession(hm,aw){const [a]=hm.zMid(),[b]=aw.zMid(),q=FORM_K.q;return Math.pow(a,q)/(Math.pow(a,q)+Math.pow(b,q))}
 
 /* Вік гравця основи: здебільшого 23–29, молодь в основі рідко. Стартовий склад
    твого клубу — 22–29 років (середній ≈ 24–25). */
 const AGE_XI=[19,20,21,22,23,24,25,26,27,28,29,30,31,32], AGE_XI_W=[1,2,3,5,7,8,9,9,8,7,6,4,3,2];
 function mkAt(role,level,gk,age){ return new P(uname(),role,level,gk,fitAge(level,gk?"gk":role,age,limCapFor(level))) }
 class Team{
-  constructor(name,level,human=false){
-    this.name=name;this.level=level;this.human=human;
+  constructor(name,level,human=false,form="4-3-3"){
+    this.name=name;this.level=level;this.human=human;this.form=FORMS[form]?form:"4-3-3";
     this.press=1;this.line=1;this.tacBonus=0;this.presence=0;this.actions=0;
     const ageXI = () => human ? ri(22,29) : wpick(AGE_XI,AGE_XI_W);
     this.gk=mkAt("gk",level,true,ri(22,32));
     this.xi={};
-    SPECS.forEach(([slot,role])=>{this.xi[slot]=mkAt(role,level*rf(.92,1.08),false,ageXI())});
+    FORMS[this.form].forEach(slot=>{this.xi[slot]=mkAt(SLOT_ROLE[slot],level*rf(.92,1.08),false,ageXI())});
     this.bench=[mkAt("gk",level*.92,true,ri(19,33)),
       ...BENCHR.map(r=>mkAt(r,level*rf(.82,1.0),false,ri(18,33)))];
-    Object.entries(SLOT_SIDE).forEach(([s,sd])=>{this.xi[s].side=sd});   // основа — на своїх флангах
+    FORMS[this.form].forEach(s=>{if(SLOT_SIDE[s]) this.xi[s].side=SLOT_SIDE[s]});   // основа — на своїх флангах
     this.subsMade=0;
     this.reset();
   }
-  all(){return [this.gk,...SLOTS.slice(1).map(s=>this.xi[s]),...this.bench]}
-  onPitch(){return [this.gk,...SLOTS.slice(1).map(s=>this.xi[s])]}
+  slots(){return ["GK",...FORMS[this.form]]}
+  all(){return [this.gk,...FORMS[this.form].map(s=>this.xi[s]),...this.bench]}
+  onPitch(){return [this.gk,...FORMS[this.form].map(s=>this.xi[s])]}
+  striker(){const s=FORMS[this.form].find(x=>SLOT_POS[x]==="НП")||FORMS[this.form][9];return this.xi[s]}
+  /* зміна схеми: ті самі десятеро, кожен на місце, де він найсильніший */
+  setForm(form){
+    if(!FORMS[form]||form===this.form) return;
+    const ps=FORMS[this.form].map(s=>this.xi[s]).filter(Boolean), slots=FORMS[form], pairs=[];
+    ps.forEach(p=>slots.forEach(s=>pairs.push([p.fitIn(s),p,s])));
+    pairs.sort((a,b)=>b[0]-a[0]);
+    const xi={},used=new Set();
+    for(const [,p,s] of pairs){ if(xi[s]||used.has(p)) continue; xi[s]=p; used.add(p) }
+    this.form=form; this.xi=xi;
+  }
   /* свіжість: твоя команда несе втому з дня на день; суперник-ШІ робить ротацію сам —
      його основа виходить на AI_FRESH: звичайно 100 %, після подвійної суботи менше (рішення 30.09) */
   reset(){const keep=this.human;this.onPitch().forEach(p=>p.reset(keep));this.bench.forEach(p=>p.reset(keep));
@@ -305,7 +351,7 @@ class Team{
     this.goals=0;this.shots=0;this.attacks=0;this.yellows=0;this.reds=0;
     this.injuries=0;this.men=11;this.subsMade=0;this.presence=0;this.actions=0}
   chem(){ /* хімія: природна позиція + свіжість зв'язків */
-    let ok=0;SPECS.forEach(([s,r])=>{if(this.xi[s].role===r)ok++});
+    let ok=0;FORMS[this.form].forEach(s=>{if(this.xi[s]&&fam(this.xi[s],s)===1)ok++});
     return Math.max(-.04, .02 + .005*ok - .03);
   }
   mult(){
@@ -316,18 +362,20 @@ class Team{
     if(this.men<11) m*=.85;
     return m;
   }
-  zone(names){
-    const ps=names.map(n=>[n,this.xi[n]]).filter(([,p])=>p&&!p.red);
+  /* сила лінії поля за схемою: середня з вагами × поправка за кількість людей у лінії */
+  zone(z){
+    const ps=FORMS[this.form].map(n=>[n,this.xi[n],(ZW[n]||{})[z]||0]).filter(([,p,w])=>p&&!p.red&&w>0);
     if(!ps.length) return [1,[]];
-    const m=this.mult();
-    return [ps.reduce((s,[n,p])=>s+p.effIn(n,m),0)/ps.length, ps.map(([,p])=>p)];
+    const m=this.mult(), W=ps.reduce((s,x)=>s+x[2],0);
+    const avg=ps.reduce((s,[n,p,w])=>s+w*p.effIn(n,m),0)/W;
+    return [avg*Math.pow(W/ZREF[z],FORM_K[z]), ps.filter(x=>x[2]>=.5).map(([,p])=>p)];
   }
   gkPower(){return this.gk.fitIn("GK")*(1+.01*abLv(this.gk,"gkref"))}
-  zDef(){return this.zone(["RB","CB1","CB2","LB"])}
-  zMid(){return this.zone(["DM","CM","AM"])}
-  zLeft(){return this.zone(["LW","LB"])}
-  zRight(){return this.zone(["RW","RB"])}
-  zAtt(){return this.zone(["ST","RW","LW","AM"])}
+  zDef(){return this.zone("def")}
+  zMid(){return this.zone("mid")}
+  zLeft(){return this.zone("L")}
+  zRight(){return this.zone("R")}
+  zAtt(){return this.zone("att")}
   tire(mins){this.onPitch().forEach(p=>{if(p.red)return;
     p.fresh=Math.max(.35,p.fresh-.0030*(1.5-p.attrs[2]/100)*this.press*mins*(1-.05*abLv(p,"stam")))})}
   rate(){const ps=this.onPitch();return ps.reduce((s,p)=>s+p.power(),0)/ps.length}
@@ -398,14 +446,14 @@ function episode(hm,aw,ph){
     return out;
   }
   if(R()<PEN_P){
-    const k=ap3.length?ap3.reduce((a,b)=>a.attrs[5]>b.attrs[5]?a:b):att.xi.ST;
+    const k=ap3.length?ap3.reduce((a,b)=>a.attrs[5]>b.attrs[5]?a:b):att.striker();
     if(R()<Math.min(.95,PEN_CONV*(1+.03*abLv(k,"set"))*(1-.05*abLv(dfn.gk,"gkpen")))){att.goals++;k.goals++;k.rating+=1;
       out.push({t:"goal",team:att,p:k,zone:"box",txt:`ПЕНАЛЬТІ — ${k.name} б'є впевнено. Гол!`});}
     else {k.rating-=.8;out.push({t:"sp",team:att,zone:"box",txt:`ПЕНАЛЬТІ — і ${k.name} не влучає!`});}
     return out;
   }
   att.shots++;
-  const sh = ap3.length? wpick(ap3,ap3.map(p=>p.attrs[5])) : att.xi.ST;
+  const sh = ap3.length? wpick(ap3,ap3.map(p=>p.attrs[5])) : att.striker();
   sh.touches++;
   if(R()<CONV*2*duel(sh.attrs[5],dfn.gkPower(),0,90)){
     att.goals++;sh.goals++;sh.rating+=1;
@@ -423,8 +471,7 @@ function episode(hm,aw,ph){
 /* ---------- швидкий матч (для ШІ-пар) ---------- */
 function quickMatch(hm,aw){
   hm.reset();aw.reset();hm.home=true;aw.home=false;
-  const [hmid]=hm.zMid(),[amid]=aw.zMid();
-  const ph=hmid/(hmid+amid), N=ri(64,76);
+  const ph=possession(hm,aw), N=ri(64,76);
   for(let i=0;i<N;i++){ if(i%6===0){hm.tire(90/N*6);aw.tire(90/N*6)}
     /* перерва — як у матчі наживо: +7 % свіжості, щоб автопілот утомлював так само */
     if(i===Math.round(N/2)) [hm,aw].forEach(t=>t.onPitch().forEach(p=>p.fresh=Math.min(1,p.fresh+.07)));
@@ -553,7 +600,7 @@ window.VERT = {
   R, ri, rf, pick, wpick, reseed, get SEED(){return SEED},
   ATTR, ATTR_SHORT, ROLES, GK_W, ROLE_UA, ROLE_POS, SLOT_POS, SLOT_UA,
   CEIL, divOf, STAR_TOP, LIM_BAND, starsOfLim, PEAK, S16, s16Of, lineAt, limFor,
-  kBase, MATCH_K, fitAge, limCapFor, lineFor, roleCurve, ABIL, abLv, abilCount, pickAbilities, P, Team, SPECS, BENCHR, SLOTS, SLOT_ROLE, SLOT_SIDE, fam, isFlank,
+  kBase, MATCH_K, fitAge, limCapFor, lineFor, roleCurve, ABIL, abLv, abilCount, pickAbilities, P, Team, SPECS, BENCHR, SLOTS, SLOT_ROLE, SLOT_SIDE, fam, isFlank, FORMS, FORM_NAMES, FORM_K, ZW, ZREF, possession,
   episode, quickMatch, makeFixtures, duel, uname, CLUBS,
   wageOf, wageFor, valueOf, divisionIncome, baseIncome, devIncome, need, levelOf, strengthAt, ceilLevel, signTier, stadiumFor,
   ticketsSeason, sponsorSeason, placePrize, upkeepSeason, wageCap, buildCost, buildHours, transferCommission, CONTRACT_K,
