@@ -1,12 +1,12 @@
 {
-    "name": "Вертикаль",
-    "short_name": "Вертикаль",
+    "name": "vertikal",
+    "short_name": "vertikal",
     "start_url": ".",
     "display": "standalone",
-    "background_color": "#000000",
-    "theme_color": "#000000",
-    "description": "Вертикаль — футбольний менеджер",
-    "orientation": "landscape",
+    "background_color": "#0175C2",
+    "theme_color": "#0175C2",
+    "description": "A new Flutter project.",
+    "orientation": "portrait-primary",
     "prefer_related_applications": false,
     "icons": [
         {
